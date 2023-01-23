@@ -1,0 +1,654 @@
+---
+title: "dimorphism_in_cellular_immunity"
+author: "Becca Belmonte"
+date: "2023-01-23"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Libraries and import
+```{r, warning=F, message=F}
+library(readr)
+library(tidyr)
+library(coxme)
+library(multcomp)
+library(scales)
+library(gridExtra)
+library(grid)
+library(DT)
+library(ggplot2)
+library(kableExtra)
+library(ggpubr)
+library(stringr)
+library(ggbeeswarm)
+library(lme4)
+library(survival)
+library(tidyverse)
+library(survminer)
+library(readxl)
+library(plyr)
+library(tidyverse)
+library(openxlsx)
+source("score_sheet_prep.R")
+library(dplyr)
+mutate <- dplyr::mutate
+```
+
+
+# Survival to S. aureus
+```{r Import, warning=F, message=F}
+lower_od <- read_excel_allsheets("20210607_score_sheet.xlsx")
+jun_18 <- read_excel_allsheets("20210618_score_sheet.xlsx") %>% 
+  filter(!is.na(Time_of_death))
+
+colors_sex <- c("#D3C164", "#05366E")
+names(colors_sex) <- c("Female", "Male")
+lines <- c("dashed", "solid")
+names(lines) <- c("PBS", "S. aureus")
+colors_inf <- c("#FEC98D", "#000004")
+names(colors_inf) <- c("Uninfected", "Infected")
+```
+
+```{r}
+ggprep <- function(x){
+  d <- data.frame(condition=rep(names(x$strata), x$strata), time=x$time, survival=x$surv, upper=x$upper, lower=x$lower)
+conditions <- unique(d$condition)
+st<- data.frame(conditions,
+                rep(0,length(conditions)),
+                rep(1,length(conditions)),
+                rep(1,length(conditions)),
+                rep(1,length(conditions)))
+colnames(st) <- colnames(d)
+
+d <- rbind(st,d) %>% 
+  separate(condition, into = c("Sex", "Date"), sep = ",") %>% 
+  mutate(Sex = gsub(".*=","",Sex))%>% 
+  mutate(Date = gsub(".*=","",Date))
+return(d)
+}
+```
+
+
+## S aureus survival
+```{r}
+jun_18_all <- jun_18 %>% 
+  unite(total_time_of_death, Day_of_death, Time_of_death, sep = " ", remove = FALSE) %>% 
+  unite(total_time_of_injection, Day_of_injection, Time_of_injection, sep = " ", remove = FALSE) %>% 
+  mutate(total_time_of_death =  as.POSIXct(total_time_of_death, format = "%Y-%m-%d %H:%M")) %>% 
+  mutate(total_time_of_injection =  as.POSIXct(total_time_of_injection, format = "%Y-%m-%d %H:%M")) %>% 
+  mutate(Time_to_death = ((total_time_of_death - total_time_of_injection))) 
+
+jun_18_all$OD[is.na(jun_18_all$OD)] <- 0
+
+
+jun_18_all$Challenge <- relevel(as.factor(jun_18_all$Challenge), ref = "PBS")
+jun_18_all$Censor <- as.numeric(jun_18_all$Censor)
+
+lower_od_all <- lower_od %>% 
+  unite(total_time_of_death, Day_of_death, Time_of_death, sep = " ", remove = FALSE) %>% 
+  unite(total_time_of_injection, Day_of_injection, Time_of_injection, sep = " ", remove = FALSE) %>% 
+  mutate(total_time_of_death =  as.POSIXct(total_time_of_death, format = "%Y-%m-%d %H:%M")) %>% 
+  mutate(total_time_of_injection =  as.POSIXct(total_time_of_injection, format = "%Y-%m-%d %H:%M")) %>% 
+  mutate(Time_to_death = as.numeric((total_time_of_death - total_time_of_injection)/60)) 
+
+lower_od_all$OD[is.na(lower_od_all$OD)] <- 0
+
+
+lower_od_all$Challenge <- relevel(as.factor(lower_od_all$Challenge), ref = "PBS")
+lower_od_all$Censor <- as.numeric(lower_od_all$Censor)
+```
+
+
+
+```{r, warning=F, message=F}
+od_0.25 <- rbind(jun_18_all, lower_od_all) %>% 
+  filter(!OD == 0.1) 
+
+od_0.25_staph <- od_0.25 %>% 
+  filter(Challenge == "S. aureus") %>% 
+  mutate(Day_of_injection = as.character(Day_of_injection))
+
+surv <- survfit(Surv(Time_to_death, Censor) ~ Sex + Day_of_injection, data = od_0.25_staph)
+gg <- ggprep(surv)
+
+
+ggplot(gg, aes(x = time, y = survival, color = Sex, ymin = lower, ymax = upper, fill = Sex)) +
+  geom_line() +
+  geom_ribbon(alpha = 0.5) +
+  geom_point(size = 1.5) +
+   theme_bw() +
+    ylab("Proportion Alive") +
+    xlab("Hours post injection") +
+    scale_colour_manual(limits = c("Female", "Male"),
+                        values = colors_sex) +
+  scale_fill_manual(limits = c("Female", "Male"),
+                        values = colors_sex) +
+  facet_wrap(~Date) +
+    ggtitle("hml-GFP survival after S. aureus infection (OD = 0.25) separated by date")
+
+surv <- survfit(Surv(Time_to_death, Censor) ~ Sex, data = od_0.25_staph)
+gg <- ggprep(surv)
+
+(staph_surv <- ggplot(gg, aes(x = time, y = survival, color = Sex, ymin = lower, ymax = upper, fill = Sex)) +
+  geom_line() +
+  geom_ribbon(alpha = 0.5) +
+  geom_point(size = 1.5) +
+   theme_bw() +
+    ylab("Proportion Alive") +
+    xlab("Hours post injection") +
+    scale_colour_manual(limits = c("Female", "Male"),
+                        values = colors_sex) +
+  scale_fill_manual(limits = c("Female", "Male"),
+                        values = colors_sex) +
+    ggtitle("Survival after S. aureus infection") +
+  theme(aspect.ratio = 1, text = element_text(size = 24)))
+#ggsave("results/survival.png", staph_surv, width = 8, height = 6)
+```
+
+
+### Hazard Ratio
+```{r}
+staph_mod <- od_0.25_staph %>% 
+  mutate(Day_of_injection =  as.factor(as.POSIXct(Day_of_injection, format = "%Y-%m-%d")),
+         Group = as.factor(paste(Sex)))
+
+model_Group <- coxph(Surv(Time_to_death,Censor) ~ Group + Day_of_injection, data= staph_mod)
+
+multcomp = glht(model_Group, linfct=mcp(Group="Tukey"))
+Comp = cld(multcomp)
+
+unlist(Comp$mcletters$Letters)%>%
+  kable(col.names = "Sign.group") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+```
+
+```{r}
+extract_coxph_table <- function (mod){
+    beta <- (mod$coefficients)
+    nvar <- length(beta)
+    nfrail <- nrow(mod$var) - nvar
+    se <- sqrt(diag(mod$var)[nfrail + 1:nvar])
+    z<- round(beta/se, 2)
+    p<- format(as.numeric(1 - pchisq((beta/se)^2, 1)), 4)
+    table=data.frame(cbind(beta,se,z,p))
+    return(table)
+ }
+
+tab_res_surv_int = extract_coxph_table(model_Group)
+tab_res_surv_int <- tab_res_surv_int %>% 
+  mutate(beta = as.numeric(beta)) %>% 
+  mutate(se = as.numeric(se)) %>% 
+  mutate(z = as.numeric(z)) %>% 
+  mutate(p = as.numeric(p)) %>% 
+  mutate() %>% 
+  mutate(Sex = rownames(tab_res_surv_int)) %>% 
+  add_row(beta = 0, se = 0, Sex = "GroupFemale") %>% 
+  mutate(HazardRatio = exp(beta),
+         Sex = gsub("Group", "", Sex)) %>% 
+  arrange(Sex) %>% 
+  filter(Sex == "Female" | Sex == "Male")
+
+
+sig_symbol <- unlist(Comp$mcletters$Letters)
+sig_df <- data.frame(Sex = names(sig_symbol),
+                     symbol = sig_symbol)
+
+
+y_pos <- tab_res_surv_int %>% 
+  group_by(Sex) %>% 
+  mutate(beta = (beta+se)*1.05) %>% 
+  select(beta, Sex) %>%
+  distinct() %>% 
+  ungroup() %>% 
+  mutate(Sex = gsub("Group", "", Sex))
+
+
+
+
+ann_text <- staph_mod %>% 
+  group_by(Sex) %>% 
+  add_count() %>% 
+  ungroup() %>% 
+  distinct(Sex, n) %>% 
+  mutate(n = paste("n =", n)) %>% 
+  left_join(y_pos) %>% 
+  left_join(sig_df) %>% 
+  mutate(label = paste(symbol, n, sep = "\n"))
+
+(staph_HR_plot <- ggplot(tab_res_surv_int, aes(x = Sex, y = beta)) +
+    geom_errorbar(aes(ymin = beta-se, ymax = beta+se, col = Sex), position = position_dodge(width = 1)) +
+    geom_point(aes(col = Sex), position = position_dodge(width = 1)) +
+    theme_bw()  +
+    ylab("log(Hazard ratio)(\u00B1se)")+
+    scale_colour_manual(values = colors_sex) +
+    ggtitle("Hazard ratio for S. aureus survival") +
+  theme(strip.background = element_rect(fill = "white"), aspect.ratio=1, legend.position = "none") +
+  labs(color = "", fill = "") +
+  geom_label(data = ann_text, aes(x = Sex, y = ((beta) + 0.25), label = label, group = Sex), position = position_dodge(width =.9)) +
+  xlab("") +
+    ylim(c(-0.25, 1.6)))
+#ggsave(staph_HR_plot, filename = "results/staph_hazard_ratio.png", width = 5, height = 4)
+
+```
+
+## Ablated hemocytes
+```{r}
+hml_rpr <- read_excel_allsheets("Emma survival experiment-2.xlsx")
+
+hml_rpr_all <- hml_rpr %>% 
+  unite(total_time_of_death, Day_of_death, Time_of_death, sep = " ", remove = FALSE) %>% 
+  unite(total_time_of_injection, Day_of_injection, Time_of_injection, sep = " ", remove = FALSE) %>% 
+  mutate(total_time_of_death =  as.POSIXct(total_time_of_death, format = "%Y-%m-%d %H:%M")) %>% 
+  mutate(total_time_of_injection =  as.POSIXct(total_time_of_injection, format = "%Y-%m-%d %H:%M")) %>% 
+  mutate(Time_to_death = (as.numeric(total_time_of_death - total_time_of_injection))) %>% 
+  mutate(Censor = as.numeric(Censor)) %>% 
+  mutate(unique_vial = paste(.id, Vial_num, sep = "_"))
+```
+
+
+```{r}
+ggprep <- function(x){
+  d <- data.frame(condition=rep(names(x$strata), x$strata), time=x$time, survival=x$surv, upper=x$upper, lower=x$lower)
+conditions <- unique(d$condition)
+st<- data.frame(conditions,
+                rep(0,length(conditions)),
+                rep(1,length(conditions)),
+                rep(1,length(conditions)),
+                rep(1,length(conditions)))
+colnames(st) <- colnames(d)
+
+d <- rbind(st,d) %>% 
+  separate(condition, into = c("Challenge", "Food", "Sex"), sep = ",") %>% 
+  mutate(Sex = gsub(".*=","",Sex))%>% 
+  mutate(Challenge = gsub(".*=","",Challenge))%>% 
+  mutate(Food = gsub(".*=","",Food))
+return(d)
+}
+```
+
+
+```{r}
+surv <- survfit(Surv(Time_to_death, Censor) ~ Challenge + Food + Sex, data = hml_rpr_all)
+df <- ggprep(surv)
+df$Challenge <- relevel(as.factor(df$Challenge), ref = "PBS")
+df$Sex <- gsub("  ", "", df$Sex)
+
+# New facet label names for food variable
+food_labs <- c("Control", "Hemocyte depleted")
+names(food_labs) <- c("neg_RU", "pos_RU")
+
+challenge_labs <- c("PBS", "S. aureus")
+names(challenge_labs) <- c("PBS", "S_aureus")
+
+(rpr_survival <- df %>% 
+ggplot(aes(x = time, y = survival, color = Sex, ymin = lower, ymax = upper, fill = Sex)) +
+  geom_line() +
+  geom_ribbon(alpha = 0.5) +
+  geom_point(size = 1.5) +
+  facet_grid(Challenge~Food, labeller = labeller(Food = food_labs, Challenge = challenge_labs)) +
+  ylab("Proportion alive") +
+  xlab("Hours post injection") +
+  labs(color = "", fill = "") +
+  scale_color_manual(values = colors_sex) +
+  scale_fill_manual(values = colors_sex) +
+  theme_bw()+
+  theme(aspect.ratio = 1))
+#ggsave("Z:/Data/Infections/Emma/survival_graph.png", rpr_survival)
+
+(hml_rpr_surv <- ggplot((df %>% filter(Challenge == "S_aureus" & time < 48)), aes(x = time, y = survival, ymin = lower, ymax = upper, color = Sex, fill = Sex)) +
+  geom_line() +
+  geom_ribbon(alpha = 0.5) +
+  geom_point(size = 1.5) +
+  ylab("Proportion alive") +
+  xlab("Hours post injection") +
+  labs(color = "", fill = "") +
+  scale_color_manual(values = colors_sex) +
+  scale_fill_manual(values = colors_sex) +
+  facet_wrap(~Food, labeller = labeller(Food = food_labs)) +
+  theme_bw() +
+  ylim(c(0,1)) +
+  ggtitle("Survival to S. aureus after hemocyte apoptosis") +
+  theme(aspect.ratio = 1, text = element_text(size = 16), strip.background = element_rect(fill = "white")))
+#ggsave("results/hemo_apop_survival_graph.png", hml_rpr_surv, width = 10, height = 6)
+```
+
+
+### Hazard Ratio
+```{r}
+staph_mod <- hml_rpr_all %>% 
+  filter(Challenge == "S_aureus") %>% 
+  mutate(Group = as.factor(paste(Sex, Food)))
+
+model_Group <- coxph(Surv(Time_to_death,Censor) ~ Group, data= staph_mod)
+
+multcomp = glht(model_Group, linfct=mcp(Group="Tukey"))
+Comp = cld(multcomp)
+
+unlist(Comp$mcletters$Letters)%>%
+  kable(col.names = "Sign.group") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+```
+
+```{r}
+extract_coxph_table <- function (mod){
+    beta <- (mod$coefficients)
+    nvar <- length(beta)
+    nfrail <- nrow(mod$var) - nvar
+    se <- sqrt(diag(mod$var)[nfrail + 1:nvar])
+    z<- round(beta/se, 2)
+    p<- format(as.numeric(1 - pchisq((beta/se)^2, 1)), 4)
+    table=data.frame(cbind(beta,se,z,p))
+    return(table)
+ }
+
+tab_res_surv_int = extract_coxph_table(model_Group)
+tab_res_surv_int <- tab_res_surv_int %>% 
+  mutate(beta = as.numeric(beta)) %>% 
+  mutate(se = as.numeric(se)) %>% 
+  mutate(z = as.numeric(z)) %>% 
+  mutate(p = as.numeric(p)) %>% 
+  mutate() %>% 
+  mutate(Treatment = rownames(tab_res_surv_int)) %>% 
+  add_row(beta = 0, se = 0, Treatment = "GroupFemale neg_RU") %>% 
+  separate(Treatment, into = c("Sex", "Food"), sep = " ") %>% 
+  mutate(HazardRatio = exp(beta),
+         Sex = gsub("Group", "", Sex)) %>% 
+  arrange(Sex) %>% 
+  filter(Sex == "Female" | Sex == "Male")
+
+
+sig_symbol <- unlist(Comp$mcletters$Letters)
+sig_df <- data.frame(Group = names(sig_symbol),
+                     symbol = sig_symbol) %>% 
+  separate(Group, into = c("Sex", "Food"), sep =" ")
+
+
+y_pos <- tab_res_surv_int %>% 
+  group_by(Sex, Food) %>% 
+  mutate(beta = (beta+se)*1.05) %>% 
+  select(beta, Sex, Food) %>%
+  distinct() %>% 
+  ungroup() %>% 
+  mutate(Sex = gsub("Group", "", Sex))
+
+
+
+
+ann_text <- staph_mod %>% 
+  group_by(Sex, Food) %>% 
+  add_count() %>% 
+  ungroup() %>% 
+  distinct(Sex, Food, n) %>% 
+  mutate(n = paste("n =", n)) %>% 
+  left_join(y_pos) %>% 
+  left_join(sig_df) %>% 
+  mutate(label = paste(symbol, n, sep = "\n"))
+
+(staph_HR_plot <- ggplot(tab_res_surv_int, aes(x = Sex, y = beta)) +
+    geom_errorbar(aes(ymin = beta-se, ymax = beta+se, col = Sex), position = position_dodge(width = 1)) +
+    geom_point(aes(col = Sex), position = position_dodge(width = 1)) +
+    theme_bw()  +
+    ylab("log(Hazard ratio)(\u00B1se)")+
+    scale_colour_manual(values = colors_sex) +
+    ggtitle("Hazard ratio for S. aureus survival after hemocyte ablation") +
+  theme(strip.background = element_rect(fill = "white"), aspect.ratio=1, legend.position = "none") +
+  labs(color = "", fill = "") +
+  geom_label(data = ann_text, aes(x = Sex, y = ((beta) + 0.5), label = label, group = Sex), position = position_dodge(width =.9)) +
+  facet_wrap(~Food, labeller = labeller(Food = food_labs)) +
+  xlab("") +
+    ylim(c(-0.25, 4.25)))
+#ggsave(staph_HR_plot, filename = "results/hemo_apop_staph_hazard_ratio.png", width = 6, height = 4)
+
+```
+
+
+# Bacterial clearance
+```{r}
+library(tidyverse)
+library(CFUfit)
+library(spaMM)
+
+counts_0_to_12 <- read.csv("COUNTS_0_to_12.csv", sep=";") %>% 
+  select(-NA.)
+
+tidy_counts <- counts_0_to_12 %>% 
+  filter(BACTERIA < Inf & BACTERIA > 0) %>% 
+  separate(WELL, into = c("row", "indiv"), sep = 1) %>% 
+  separate(Name, into = c("time", "sex"), remove = FALSE) %>% 
+  mutate(replicate = case_when(row %in% c("A", "B", "C", "D") ~ "rep_1",
+                               TRUE ~ "rep_2")) %>% 
+  mutate(date = "Sep_09") %>% 
+  mutate(indiv_label = paste(Name, indiv, replicate, date, sep = "."),
+         individual = paste(Name, indiv, sep = ".")) %>% 
+  group_by(indiv_label) %>% 
+  mutate(time = factor(as.factor(time), levels = c("t0", "t4", "t8", "t12"))) %>% 
+  separate(time, into = c("t", "hours"), remove = FALSE, sep = 1) %>%
+  mutate(hours = as.numeric(hours),
+         sq_hours = hours^2)
+
+data_load = 
+       with(tidy_counts,
+            loadEstimate(BACTERIA,1/Dilution,Volume, individual,
+                         maxCFU = 100, 
+                         ignoreAboveMaxCFU = TRUE,
+                         logbase = 2))
+
+model.full = fitme(BACTERIA ~  sq_hours * sex +
+                         (1|individual) +
+                         offset(log(Volume)-log(Dilution*250)),
+                       family=negbin(link="log"),
+                       rand.family=Gamma(link="log"),
+                       data =subset(tidy_counts,!is.na(BACTERIA)))
+    
+    model.2 = fitme(BACTERIA ~  sq_hours + sex +
+                         (1|individual) +
+                         offset(log(Volume)-log(Dilution*250)),
+                       family=negbin(link="log"),
+                       rand.family=Gamma(link="log"),
+                       data =subset(tidy_counts,!is.na(BACTERIA)))
+    
+     model.female = fitme(BACTERIA ~  sq_hours  +
+                         (1|individual) +
+                         offset(log(Volume)-log(Dilution*250)),
+                       family=negbin(link="log"),
+                       rand.family=Gamma(link="log"),
+                       data =subset(tidy_counts,!is.na(BACTERIA) & sex == "female"))
+     
+     model.male = fitme(BACTERIA ~  sq_hours  +
+                         (1|individual) +
+                         offset(log(Volume)-log(Dilution*250)),
+                       family=negbin(link="log"),
+                       rand.family=Gamma(link="log"),
+                       data =subset(tidy_counts,!is.na(BACTERIA) & sex == "male"))
+    
+    
+    test = anova(model.2,model.full,test="F")
+    
+    tmp_sq = data.frame(#microRNA=j,
+                     #Sex=i,
+                     intercept = format(model.full$fixef[1]/log(2),digits=3),
+                     estimate = format(model.full$fixef[4]/log(2),digits=3),
+                     chi2_LR = format(as.numeric(test$basicLRT$chi2_LR), digits = 2),
+                     df = as.numeric(test$basicLRT$df),
+                     Pvalue = as.numeric(format(pchisq(test$basicLRT$chi2_LR,df=1,lower.tail = F),digits=2)))
+    
+mod_list <- vector("list")
+full_model <- vector("list")
+
+for(hour in c("t0", "t8", "t12")){
+  cfus <- tidy_counts %>% 
+    filter(time == hour)
+  model.full = fitme(BACTERIA ~ sex +
+                         (1|individual) +
+                         offset(log(Volume)-log(Dilution*250)),
+                       family=negbin(link="log"),
+                       rand.family=Gamma(link="log"),
+                       data =subset(cfus,!is.na(BACTERIA)))
+  full_model[[hour]] <- model.full
+    
+    model.2 = fitme(BACTERIA ~ 1 + (1|individual) +
+                      offset(log(Volume)-log(Dilution*250)),
+                    family=negbin(link="log"),
+                    rand.family=Gamma(link="log"),
+                    data =subset(cfus,!is.na(BACTERIA)))
+    
+    mod_list[[hour]] = anova(model.2,model.full,test="F")}
+
+p_val <- sapply(1:length(mod_list), function(i) as.numeric(mod_list[[i]][[3]][3]))
+p_val <- as.character(signif(p_val, digits=3))
+names(p_val) <- names(mod_list)
+p_vals <- as.data.frame(p_val) %>% 
+  mutate(time = names(mod_list))
+
+```
+
+```{r}
+gg_data <- data_load %>% 
+  filter(!is.na(load)) %>% 
+  mutate(estimate = load*250) %>% 
+  separate(sampleID, into = c("time", "sex", "Row"), remove = FALSE) %>% 
+  mutate(time = factor(as.factor(time), levels = c("t0", "t4", "t8", "t12"))) %>% 
+  separate(time, into = c("t", "hours"), remove = FALSE, sep = 1) %>%
+  mutate(hours = as.numeric(hours)) %>% 
+  mutate(log2 = log2(estimate),
+         sex = str_to_title(sex))
+
+y_pos <- gg_data %>% 
+  group_by(hours, sex) %>% 
+  add_count() %>% 
+  ungroup() %>% 
+  group_by(hours) %>% 
+  mutate(y_pos = max(estimate)*1.25) %>% 
+  select(y_pos, time, n) %>% 
+  distinct() %>% 
+  ungroup()
+
+anno_df <- p_vals %>% 
+  left_join(y_pos) %>% 
+  mutate(hours = as.factor(hours),
+         p_val = round(as.numeric(p_val), 3),
+         label = paste("n = ", n, "\n", p_val, sep = ""))
+
+gg_data <- gg_data %>% filter(!hours == 4) %>% 
+  mutate(hours = as.factor(hours))
+
+(time_course <- ggplot(data = gg_data, aes(x = hours, y = log2(estimate))) +
+  geom_boxplot(alpha = 0.25, outlier.shape = NA, aes(fill = sex, color = sex)) +
+  geom_quasirandom(dodge.width = 0.85, aes(fill = sex, color = sex)) +
+  theme_bw() +
+  scale_color_manual(values = colors_sex, name = NULL) +
+  scale_fill_manual(values = colors_sex, name = NULL) +
+  geom_label(data = anno_df, aes(x = hours, y = log2(y_pos) + 1, label = label)) +
+  ylab("log2(CFU) per fly") +
+  xlab("Hours post injection") +
+  #ggtitle("Bacterial load of S. aureus during infection") +
+  theme(text = element_text(size = 14), aspect.ratio = 1) +
+  ylim(c(9, 22)))
+ggsave("results/boxplot_0_12.png", time_course, width = 5, height = 4)
+```
+
+```{r}
+prediction <- predict(model.full)
+```
+
+
+
+# Phagocytosis measured by flow
+```{r}
+phago <- read_excel("20220825_phago.xls") %>% 
+  mutate(Date = "Aug_25")
+sep_20 <- read_excel("29-Sep-2022_phago.xls") %>% 
+  mutate(Date = "Sep_20")
+sep_21 <- read_excel("210922_phago.xls") %>% 
+  mutate(Date = "Sep_21")
+
+all_flow <- rbind(phago, sep_20, sep_21) %>% 
+  separate(Name, c("Sample","Hierarchy"), "\\.",extra = "merge") %>% 
+  mutate(Measure = case_when(grepl("gfp/engulfed", Hierarchy) ~ "Engulfed",
+                             (grepl("all-gfp", Hierarchy) & Depth == "> > >") ~ "GFP_cells",
+                              grepl("phagocytosed", Hierarchy) ~ "Engulfed",
+                             (grepl("all_gfp", Hierarchy) & Depth == "> > >" )~ "GFP_cells")) %>% 
+  filter(!is.na(Measure)) %>% 
+  select(-Depth, -Hierarchy) %>% 
+  pivot_wider(names_from = Measure, values_from = c(Statistic, `#Cells`))  %>% 
+  separate(Sample, into = c("Trash", "Label"), 13) %>% 
+  select(-Trash) %>% 
+  mutate(Sex = case_when((grepl("_female_", Label) | grepl("_f_", Label)) ~ "Female",
+                         (grepl("_male_", Label) | grepl("_m_", Label)) ~ "Male"),
+         Genotype = case_when(grepl("_gfp_", Label) ~ "hml-GFP",
+                              grepl("_gs_", Label) ~ "Antibody_stained")) %>% 
+  filter(!is.na(Sex)) 
+
+all_flow_non_phago <- all_flow %>% 
+  select(-Statistic_GFP_cells, -Statistic_Engulfed) %>% 
+  mutate(non_phago_cells = (`#Cells_GFP_cells` - `#Cells_Engulfed`)) %>% 
+  uncount(non_phago_cells) %>% 
+  mutate(Engulfed = (0)) %>% 
+  select(-`#Cells_GFP_cells`, -`#Cells_Engulfed`)
+
+all_flow_phago <- all_flow %>% 
+  select(-Statistic_GFP_cells, -Statistic_Engulfed) %>% 
+  mutate(non_phago_cells = (`#Cells_GFP_cells` - `#Cells_Engulfed`)) %>% 
+  uncount(`#Cells_Engulfed`) %>% 
+  mutate(Engulfed = (1)) %>% 
+  select(-`#Cells_GFP_cells`, -non_phago_cells)
+
+all_flow_mod <- rbind(all_flow_non_phago, all_flow_phago)
+```
+
+## Graphs
+```{r}
+(phago_by_method <- ggplot(all_flow, aes(x = Sex, y = Statistic_Engulfed, color = Sex, fill = Sex)) +
+  geom_boxplot(alpha = 0.25, outlier.shape = NA) +
+  geom_quasirandom(dodge.width = 0.75) +
+  theme_bw() +
+  scale_color_manual(values = colors_sex) +
+  scale_fill_manual(values = colors_sex) +
+  ylab("Phagocytic hemocytes (%)") +
+  theme(text = element_text(size = 20), aspect.ratio = 1) +
+  xlab(""))
+#ggsave("results/phago_by_flow.png", phago_by_method, width = 5, height = 4)
+
+```
+
+## Model 
+```{r}
+library(lme4)
+m <- glmer(Engulfed ~ Sex + (1|Date) + (1|Genotype), data = all_flow_mod, family = binomial)
+summary(m, corr = FALSE)
+m.1 <- glmer(Engulfed ~ 1 + (1|Date) + (1|Genotype), data = all_flow_mod, family = binomial)
+anova(m, m.1)
+
+predict(m, type = "response", 
+        re.form = NA,
+        newdata = data.frame(Sex = c("Female", "Male"))
+)
+
+confint <- exp(confint(m, parm = "SexMale"))  
+int_ran_eff_confint <- confint(m, parm = "theta_", oldNames = FALSE)
+
+
+sim <- simulate(m, nsim = 100)
+obs <- aggregate(all_flow_mod$Engulfed, by = list(Sex = all_flow_mod$Sex, Genotype = all_flow_mod$Genotype, Date = all_flow_mod$Date), mean)
+obs
+
+s_p <- lapply(sim, aggregate,
+              by = list(Sex = all_flow_mod$Sex),
+              mean)
+s_df <- do.call(rbind, s_p)
+
+library(ggplot2)
+(model_prediction_gg <- ggplot() +
+  geom_point(aes(y = x, x = Sex, color = Sex), data = obs, 
+             size = 4) +
+  geom_jitter(aes(y = x, x = Sex), data = s_df, 
+              width = 0.2, height = 0, shape = 1, alpha = 1/2) +
+  labs(x = "", y = "Predicted Probability", 
+       title = "") + 
+  scale_color_manual(values = colors_sex) +
+  theme_bw() +
+  theme(aspect.ratio = 1))
+#ggsave(model_prediction_gg, filename = "results/model_predict.png", width = 5, height = 4)
+```
+
