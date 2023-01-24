@@ -15,35 +15,50 @@ knitr::opts_chunk$set(echo = TRUE)
 # Libraries
 ```{r message=FALSE, warning=FALSE}
 # Scripts for differential expression analyses
-# spline fitting and pairwise differential expression
-# last updated: March 2nd, 2021
-# Florencia Schlamp
-# mfs97@cornell.edu
+# pairwise differential expression
 
+# BiocManager::install("clusterProfiler")
+# if (!require("BiocManager", quietly = TRUE))
+#     install.packages("BiocManager")
+# 
+# BiocManager::install("pathview")
+# BiocManager::install("enrichplot")
+library(clusterProfiler)
+library(enrichplot)
+library(ggplot2)
+
+organism = "org.Dm.eg.db"
+#BiocManager::install(organism, character.only = TRUE)
+library(organism, character.only = TRUE)
 library(tidyverse)
 library(limma)
 library(edgeR)
 library(splines)
 library(DESeq2)
 library(fgsea)
-setwd("RNA_seq")
+library(ggrepel)
+select <- dplyr::select
+
+colors_sex <- c("#D3C164", "#05366E")
 ```
 
 
 # Import
 ```{r}
-fpkm_counts <- read.csv("Data/fpkm_gene.csv")
+fpkm_counts <- read.csv("RNA_seq/Data/fpkm_gene.csv")
 rownames(fpkm_counts) <- fpkm_counts$gene_name
 dat_fpkm <- fpkm_counts %>% 
   dplyr::select(-c(X, gene_id, source, gene_name, gene_biotype, phase))
 
-full_counts <- read.csv("Data/raw_gene.csv")
+full_counts <- read.csv("RNA_seq/Data/raw_gene.csv")
 rownames(full_counts) <- full_counts$gene_name
 dat <- full_counts %>% 
   dplyr::select(-c(X, gene_id, source, gene_name, gene_biotype, phase))
 
-col_data <- read.csv("Data/col_data_for_r.csv")
+col_data <- read.csv("RNA_seq/Data/col_data_for_r.csv")
 rownames(col_data) <- col_data$ID
+gene_names_fb <- fpkm_counts %>% 
+  dplyr::select(gene_id, gene_name)
 
 ```
 
@@ -51,6 +66,44 @@ rownames(col_data) <- col_data$ID
 # Making models
 
 ```{r}
+# Larval hemocytes
+dat_fpkm_lar <- dat_fpkm %>% 
+  select(contains("lar"))
+
+col_data_lar <- col_data %>% 
+  filter(Stage == "larvae" & Tissue == "hemocyte")
+
+dat_fpkm_lar <- dat_fpkm_lar %>% 
+  select(col_data_lar$ID)
+data_lar_colnames <- colnames(dat_fpkm_lar)
+colnames(dat_fpkm_lar) <- col_data_lar$Sex
+
+# dimorphically expressed at baseline
+lev <- unique(colnames(dat_fpkm_lar))
+f <- factor(col_data_lar$Sex, levels = lev)
+design <- model.matrix(~0+f)
+colnames(design) <- lev
+fit <- lmFit(dat_fpkm_lar, design)
+
+# Which genes respond at either the 2 hour or 4 hour time?
+cont_lar <- makeContrasts(
+  "Male-Female",
+  levels = design
+)
+fit_lar <- contrasts.fit(fit, cont_lar)
+fit_lar <- eBayes(fit_lar)
+top_lar <- topTable(fit_lar, adjust = "BH", number = 17412)
+
+# differentially expressed over time (ignoring sex)
+lev <- c("UC", "Hr_2", "Hr_4")
+f <- factor(col_data_hem$time_chr, levels = lev)
+design <- model.matrix(~0+f)
+colnames(design) <- lev
+fit <- lmFit(dat_fpkm_time, design)
+
+############################################################
+# Setting up the adult hemocyte model
+
 dat_fpkm_hem <- dat_fpkm %>% 
   select(contains("hem"))
 
@@ -71,7 +124,93 @@ data_colnames <- colnames(dat_fpkm_hem)
 dat_fpkm_time <- dat_fpkm_hem
 colnames(dat_fpkm_time) <- col_data_hem$time_chr
 
-# differentially expressed over time (ignoring sex)
+# dimorphically expressed at baseline
+col_data_hem_0 <- col_data_hem %>% 
+  filter(time == 0)
+dat_fpkm_hem_0 <- dat_fpkm_hem %>% 
+  select(col_data_hem_0$ID)
+data_colnames_0 <- colnames(dat_fpkm_hem_0)
+colnames(dat_fpkm_hem_0) <- col_data_hem_0$Sex
+lev <- unique(colnames(dat_fpkm_hem_0))
+f <- factor(col_data_hem_0$Sex, levels = lev)
+design <- model.matrix(~0+f)
+colnames(design) <- lev
+fit <- lmFit(dat_fpkm_hem_0, design)
+
+# Which genes are dimorphic at 0 hours?
+cont_sex_0 <- makeContrasts(
+  "Male-Female",
+  levels = design
+)
+fit_sex_0 <- contrasts.fit(fit, cont_sex_0)
+fit_sex_0 <- eBayes(fit_sex_0)
+top_sex_0 <- topTable(fit_sex_0, adjust = "BH", number = 17412)
+
+# dimorphically expressed at 2 hr
+col_data_hem_2 <- col_data_hem %>% 
+  filter(time == 2)
+dat_fpkm_hem_2 <- dat_fpkm_hem %>% 
+  select(col_data_hem_2$ID)
+data_colnames_2 <- colnames(dat_fpkm_hem_2)
+colnames(dat_fpkm_hem_2) <- col_data_hem_2$Sex
+lev <- unique(colnames(dat_fpkm_hem_2))
+f <- factor(col_data_hem_2$Sex, levels = lev)
+design <- model.matrix(~0+f)
+colnames(design) <- lev
+fit <- lmFit(dat_fpkm_hem_2, design)
+
+# Which genes are dimorphic at 2 hours?
+cont_sex_2 <- makeContrasts(
+  "Male-Female",
+  levels = design
+)
+fit_sex_2 <- contrasts.fit(fit, cont_sex_2)
+fit_sex_2 <- eBayes(fit_sex_2)
+top_sex_2 <- topTable(fit_sex_2, adjust = "BH", number = 17412)
+
+# dimorphically expressed at 4 hr
+col_data_hem_4 <- col_data_hem %>% 
+  filter(time == 4)
+dat_fpkm_hem_4 <- dat_fpkm_hem %>% 
+  select(col_data_hem_4$ID)
+data_colnames_4 <- colnames(dat_fpkm_hem_4)
+colnames(dat_fpkm_hem_4) <- col_data_hem_4$Sex
+lev <- unique(colnames(dat_fpkm_hem_4))
+f <- factor(col_data_hem_4$Sex, levels = lev)
+design <- model.matrix(~0+f)
+colnames(design) <- lev
+fit <- lmFit(dat_fpkm_hem_4, design)
+
+# Which genes are dimorphic at 4 hours?
+cont_sex_4 <- makeContrasts(
+  "Male-Female",
+  levels = design
+)
+fit_sex_4 <- contrasts.fit(fit, cont_sex_4)
+fit_sex_4 <- eBayes(fit_sex_4)
+top_sex_4 <- topTable(fit_sex_4, adjust = "BH", number = 17412)
+
+# dimorphically expressed ignoring time
+dat_fpkm_hem_dim <- dat_fpkm_hem %>% 
+  select(col_data_hem$ID)
+data_colnames_hem_dim <- colnames(dat_fpkm_hem_dim)
+colnames(dat_fpkm_hem_dim) <- col_data_hem$Sex
+lev <- unique(colnames(dat_fpkm_hem_dim))
+f <- factor(col_data_hem$Sex, levels = lev)
+design <- model.matrix(~0+f)
+colnames(design) <- lev
+fit <- lmFit(dat_fpkm_hem_dim, design)
+
+# Which genes are dimorphic ignoring time?
+cont_sex <- makeContrasts(
+  "Male-Female",
+  levels = design
+)
+fit_sex <- contrasts.fit(fit, cont_sex)
+fit_sex <- eBayes(fit_sex)
+top_sex <- topTable(fit_sex, adjust = "BH", number = 17412)
+
+# differentially expressed over time (ignoring time)
 lev <- c("UC", "Hr_2", "Hr_4")
 f <- factor(col_data_hem$time_chr, levels = lev)
 design <- model.matrix(~0+f)
@@ -129,9 +268,9 @@ fit_dif <- eBayes(fit_dif)
 top_dif <- topTable(fit_dif, adjust.method = "BH", sort.by = "B", resort.by = NULL, p.value = 1, lfc = 0, confint = FALSE, number = 17412)
 ```
 
-# Heatmap
+
+# Visualizations
 ## Both
-## Female 
 ```{r}
 top_time$gene <- rownames(top_time)
 
@@ -156,7 +295,7 @@ mat_top_time <- as.matrix(gg_top_time)
 
 mat_top_time <- mat_top_time - rowMeans(mat_top_time)
 
-heatmap3(mat_top_time, trace = "none", col = colors, labCol = NULL, labRow = rownames(mat_top_time), RowSideLabs = F, ColSideLabs = F, mar = c(5, 12), key.title = "Expression", cexRow = 1, scale = "row")
+# heatmap3(mat_top_time, trace = "none", col = colors, labCol = NULL, labRow = rownames(mat_top_time), RowSideLabs = F, ColSideLabs = F, mar = c(5, 12), key.title = "Expression", cexRow = 1, scale = "row")
 # grid.echo()
 # top_time_heatmap <- grid.grab()
 # 
@@ -199,981 +338,75 @@ gg_top_time <- dat_fpkm_time %>%
   mutate(avg_count = mean(count)) %>% 
   filter(direction %in% c("2h_neg 4h_neg", "2h_neg 4h_pos", "2h_pos 4h_neg", "2h_pos 4h_pos"))
 
-(time_plot <- ggplot(gg_top_time, aes(x = time_hours, y = avg_count, color = gene)) +
-  geom_line() +
-  geom_point(aes(y = count)) +
-  theme_bw() +
-  theme(legend.position = "none", aspect.ratio = 1) +
-  facet_wrap(~direction, scales = "free") +
-  ylab("Gene counts (fpkm)") +
-  xlab("Hours post injection"))
+# (time_plot <- ggplot(gg_top_time, aes(x = time_hours, y = avg_count, color = gene)) +
+#   geom_line() +
+#   geom_point(aes(y = count)) +
+#   theme_bw() +
+#   theme(legend.position = "none", aspect.ratio = 1) +
+#   facet_wrap(~direction, scales = "free") +
+#   ylab("Gene counts (fpkm)") +
+#   xlab("Hours post injection"))
 #ggsave("Results/limma/time_top_genes_time.png", time_plot, width = 6, height = 6)
 ```
 
-## Female 
+### Volcano plot 
 ```{r}
-top_female$gene <- rownames(top_female)
+library(ggrepel)
+top_time$gene_name <- rownames(top_time)
 
-gg_top_dif <- dat_fpkm_hem
-colnames(gg_top_dif) <- data_colnames
-gg_top_dif <- gg_top_dif %>% 
-  mutate(gene = rownames(gg_top_dif)) %>% 
-  filter(gene %in% top_female$gene) %>% 
-  select(-gene) %>% 
-  select(contains("F_"))
-
-library(heatmap3)
-library(viridis)
-library(gridGraphics)
-# colors <- colorRampPalette( viridis(9) )(28236)
-# 
-# mat_top_dif <- as.matrix(gg_top_dif)
-# 
-# mat_top_dif <- mat_top_dif - rowMeans(mat_top_dif)
-# 
-# heatmap3(mat_top_dif, trace = "none", col = colors, labCol = NULL, labRow = rownames(mat_top_dif), RowSideLabs = F, ColSideLabs = F, mar = c(5, 12), key.title = "Expression", cexRow = 1, scale = "row")
-# grid.echo()
-# female_time_heatmap <- grid.grab()
-# 
-# png(filename = "Results/female_time_heatmap.png", width = 1000, height = 2000, units = "px")
-# grid.draw(female_time_heatmap)
-# dev.off()
-
-
-# library(heatmaply)
-# 
-# (heat_time <- heatmaply(mat_top_dif, xlab = "", ylab = "", main = "", scale = "column",
-#           margins = c(60,100,40,20), 
-#           grid_width = 0.00001, titleX = FALSE,
-#           hide_colorbar = TRUE, branches_lwd = 0.1, 
-#           label_names = c("Gene", "Sample", "Value"),
-#           fontsize_row = 10, fontsize_col = 10,
-#           labCol = colnames(mat_top_dif),
-#           labRow = rownames(mat_top_dif),
-#           heatmap_layers = theme(axis.line = element_blank())))
-
-
-top_female_gg <- top_female %>% 
-  mutate(direction_2 = case_when(Female_2.Female_0 <0 ~ "2h_neg",
-                                 Female_2.Female_0 >0 ~ "2h_pos"),
-         direction_4 = case_when(Female_4.Female_2 <0 ~ "4h_neg",
-                                 Female_4.Female_2 >0 ~ "4h_pos")) %>% 
-  select(gene, direction_2, direction_4) %>% 
-  mutate(direction = paste(direction_2, direction_4))
-# top_genes_f <- top_female %>% 
-#   select(direction, gene)
-# 
-# top_genes <- top_male  %>% 
-#   select(direction, gene) %>% 
-#   rbind(top_genes_f) 
-
-gg_top_dif <- gg_top_dif %>% 
-  mutate(gene = rownames(gg_top_dif)) %>% 
-  inner_join(top_female_gg, by = "gene") %>% 
-  pivot_longer(cols = 1:14, names_to = "sample", values_to = "count") %>% 
-  separate(sample, into = c("Sex", "Time", "hem", "rep")) %>% 
-  mutate(time_hours = case_when(Time == "2h" ~ 2,
-                                Time == "4h" ~ 4,
-                                Time == "UC" ~ 0)) %>% 
-  group_by(Sex, time_hours, gene) %>% 
-  mutate(avg_count = mean(count)) %>% 
-  filter(direction %in% c("2h_neg 4h_neg", "2h_neg 4h_pos", "2h_pos 4h_neg", "2h_pos 4h_pos"))
-
-(female_plot <- ggplot(gg_top_dif, aes(x = time_hours, y = avg_count, color = gene)) +
-  geom_line() +
-  geom_point(aes(y = count)) +
-  theme_bw() +
-  theme(legend.position = "none", aspect.ratio = 1) +
-  facet_wrap(~direction, scales = "free") +
-  ylab("Gene counts (fpkm)") +
-  xlab("Hours post injection"))
-#ggsave("Results/limma/female_top_genes_time.png", female_plot, width = 6, height = 6)
-```
-
-
-```{r}
-female_down_genes <- top_female_gg %>% 
-  filter(direction == "2h_neg 4h_neg") %>% 
-  left_join(top_female, by = "gene")
-female_up_genes <- top_female_gg %>% 
-  filter(direction == "2h_pos 4h_pos") %>% 
-  left_join(top_female, by = "gene")
-female_down_up_genes <- top_female_gg %>% 
-  filter(direction == "2h_neg 4h_pos") %>% 
-  left_join(top_female, by = "gene")
-female_up_down_genes <- top_female_gg %>% 
-  filter(direction == "2h_pos 4h_neg") %>% 
-  left_join(top_female, by = "gene")
-```
-
-## Volcano plot 
-```{r}
-top_Female_vol <- top_female %>% 
-  mutate(color_2 = case_when(`Female_2.Female_0` > 2 & P.Value < 0.05 ~ "Upregulated at 2 hrs",
-                           `Female_2.Female_0` < -2 & P.Value < 0.05 ~ "Downregulated at 2 hrs",
+top_time_vol <- top_time %>% 
+  mutate(color_2 = case_when(Hr_2.UC > 2 & P.Value < 0.05 ~ "Upregulated at 2 hrs",
+                           `Hr_2.UC` < -2 & P.Value < 0.05 ~ "Downregulated at 2 hrs",
                            TRUE ~ "NS"),
-         color_4 = case_when(`Female_4.Female_2` > 2 & P.Value < 0.05 ~ "Upregulated at 4 hrs",
-                           `Female_4.Female_2` < -2 & P.Value < 0.05 ~ "Downregulated at 4 hrs",
+         color_4 = case_when(Hr_4.Hr_2 > 2 & P.Value < 0.05 ~ "Upregulated at 4 hrs",
+                           Hr_4.Hr_2 < -2 & P.Value < 0.05 ~ "Downregulated at 4 hrs",
                            TRUE ~ "NS"))
-top_Female_vol$gene <- base::rownames(top_Female_vol)
-  
 
-(Female_volcano_2 <- top_Female_vol %>% 
- # filter(dif2hr > -2710) %>% 
- # filter(dif2hr < 1184) %>% 
-  ggplot(aes(x = `Female_2.Female_0`, y = -log10(P.Value), label = gene)) +
-  geom_point(aes(color = color_4)) +
-  geom_text_repel(data = top_Female_vol %>% filter(!color_4 == "NS"), aes(label = gene)) +
-  scale_color_manual(values = c("#000004", "lightgrey", "#FEC98D"), name = NULL) +
+colors_time <- c("#F56B5C", "#FEC287", "#000004")
+
+(time_volcano_2 <- top_time_vol %>% 
+  filter(Hr_2.UC <10000) %>% 
+  ggplot(aes(x = Hr_2.UC, y = -log10(P.Value), label = gene_name)) +
+  geom_point(aes(color = color_2)) +
+  geom_text_repel(data = top_time_vol %>% filter(!color_2 == "NS"), aes(label = gene_name)) +
+  scale_color_manual(values = c("#000004", "lightgrey", "#FEC287"), name = NULL) +
   theme_bw() +
+  theme(aspect.ratio = 1) +
   xlab("Log2 Fold Change at 2 hours") +
   ylab("-log10(P value)") +
-  ggtitle("Genes differentially expressed in Female hemocytes 2 hours after S. aureus injection"))
+  ggtitle("Genes differentially expressed in hemocytes \n(2 hours post injection versus uninfected)"))
 
-(Female_volcano_4 <- top_Female_vol %>% 
- # filter(dif2hr > -2710) %>% 
- # filter(dif2hr < 1184) %>% 
-  ggplot(aes(x = `Female_4.Female_2`, y = -log10(P.Value), label = gene)) +
-  geom_point(aes(color = color_2)) +
-  geom_text_repel(data = top_Female_vol %>% filter(!color_2 == "NS"), aes(label = gene)) +
-  scale_color_manual(values = c("#000004", "lightgrey", "#FEC98D"), name = NULL) +
-  theme_bw() +
-  xlab("Log2 Fold Change at 4 hours") +
-  ylab("-log10(P value)") +
-  ggtitle("Genes differentially expressed in Female hemocytes 4 hours after S. aureus injection"))
-  
-#ggsave("Results/limma/Female_volcano_2hr.png", Female_volcano_2, width = 8, height = 6)  
-#ggsave("Results/limma/Female_volcano_4hr.png", Female_volcano_4, width = 8, height = 6)
-```
-
-
-
-
-```{r}
-top_female <- cbind(top_female, Gene_ID_Flybase[match(top_female$gene, Gene_ID_Flybase$Gene_name), "CG_ID"])
-colnames(top_female)[ncol(top_female)] = "CG_ID"
-
-ranks <- top_female$Female_2.Female_0[!is.na(top_female$Female_2.Female_0)]
-names(ranks) <- top_female$CG_ID[!is.na(top_female$Female_2.Female_0)]
-head(ranks)
-barplot(sort(ranks, decreasing = T))
-
-fgseaRes_female <- fgsea(t_Drosophila_REACTOME, ranks, minSize = 15, maxSize = 500)
-head(fgseaRes[order(padj, -abs(NES)), ], n=10)
-plotEnrichment(t_Drosophila_REACTOME[["Metabolism"]], ranks) +
-  ggtitle("Metabolism genes in females in first 2hrs of infection")
-```
-
-### Female ClusterProfiler GSEA
-```{r}
-# BiocManager::install("clusterProfiler")
-# if (!require("BiocManager", quietly = TRUE))
-#     install.packages("BiocManager")
-# 
-# BiocManager::install("pathview")
-# BiocManager::install("enrichplot")
-library(clusterProfiler)
-library(enrichplot)
-library(ggplot2)
-
-```
-
-```{r}
-organism = "org.Dm.eg.db"
-#BiocManager::install(organism, character.only = TRUE)
-library(organism, character.only = TRUE)
-```
-
-
-```{r}
-original_gene_list <- top_female$`Female_2.Female_0`
-names(original_gene_list) <- rownames(top_female)
-gene_list <- na.omit(original_gene_list)
-gene_list <- sort(gene_list, decreasing = TRUE)
-
-gse <- gseGO(geneList = gene_list,
-             ont = "ALL",
-             keyType = "SYMBOL",
-             minGSSize = 3,
-             maxGSSize = 800,
-             pvalueCutoff = 0.05,
-             verbose = TRUE,
-             OrgDb = organism,
-             pAdjustMethod = "none")
-
-gse_female_2hr <- gse
-```
-
-
-```{r}
-require(DOSE)
-
-direction_labs <- c("Up-regulated", "Down-regulated")
-names(direction_labs) <- c("activated", "suppressed")
-
-(gse_female_2hr_dotplot <- dotplot(gse_female_2hr, showCategory=10, split=".sign") +
-  facet_grid(.~.sign, labeller = labeller(.sign = direction_labs)) +
-  theme(strip.background = element_rect(fill = "white"), aspect.ratio = 1) +
-  ggtitle("Enriched gene sets in female hemocytes 2 hours post injection"))
-#ggsave("Results/limma/gse_female_2hr_dotplot.png", plot = gse_female_2hr_dotplot, width = 14, height = 6) 
-
-cnetplot(gse_female_2hr, categorySize="pvalue", foldChange=gene_list)
-```
-
-
-
-```{r}
-# We will lose some genes here because not all IDs will be converted
-ids<-bitr(names(original_gene_list), fromType = "SYMBOL", toType = "ENTREZID", OrgDb=organism)
- # remove duplicate IDS (here I use "ENSEMBL", but it should be whatever was selected as keyType)
-dedup_ids = ids[!duplicated(ids[c("SYMBOL")]),]
-
-df2 = top_female[top_female$gene %in% dedup_ids$SYMBOL,]
-df2$Y = dedup_ids$ENTREZID
-kegg_gene_list <- df2$`Female_2.Female_0`
-names(kegg_gene_list) <- df2$Y
-kegg_gene_list<-na.omit(kegg_gene_list)
-kegg_gene_list = sort(kegg_gene_list, decreasing = TRUE)
-
-kegg_organism = "dme"
-kk2 <- gseKEGG(geneList     = kegg_gene_list,
-               organism     = kegg_organism,
-               nPerm        = 10000,
-               minGSSize    = 3,
-               maxGSSize    = 800,
-               pvalueCutoff = 0.05,
-               pAdjustMethod = "none",
-               keyType       = "ncbi-geneid")
-
-direction_labs <- c("Up-regulated", "Down-regulated")
-names(direction_labs) <- c("activated", "suppressed")
-
-(gse_kegg_female_2hr_dotplot <- dotplot(kk2, showCategory=10, split=".sign") +
-  facet_grid(.~.sign, labeller = labeller(.sign = direction_labs)) +
-  theme(strip.background = element_rect(fill = "white"), aspect.ratio = 1) +
-  ggtitle("Enriched KEGG pathways in female hemocytes 2 hours post injection"))
-#ggsave("Results/limma/gse_kegg_female_2hr_dotplot.png", plot = gse_kegg_female_2hr_dotplot, width = 14, height = 6) 
-```
-
-
-
-```{r}
-original_gene_list <- top_female$`Female_4.Female_2`
-names(original_gene_list) <- rownames(top_female)
-gene_list <- na.omit(original_gene_list)
-gene_list <- sort(gene_list, decreasing = TRUE)
-
-gse <- gseGO(geneList = gene_list,
-             ont = "ALL",
-             keyType = "SYMBOL",
-             minGSSize = 3,
-             maxGSSize = 800,
-             pvalueCutoff = 0.05,
-             verbose = TRUE,
-             OrgDb = organism,
-             pAdjustMethod = "none")
-
-gse_female_4hr <- gse
-```
-
-
-```{r}
-require(DOSE)
-
-direction_labs <- c("Up-regulated", "Down-regulated")
-names(direction_labs) <- c("activated", "suppressed")
-
-(gse_female_4hr_dotplot <- dotplot(gse_female_4hr, showCategory=10, split=".sign") +
-  facet_grid(.~.sign, labeller = labeller(.sign = direction_labs)) +
-  theme(strip.background = element_rect(fill = "white"), aspect.ratio = 1) +
-  ggtitle("Enriched gene sets in female hemocytes 4 hours post injection"))
-#ggsave("Results/limma/gse_female_4hr_dotplot.png", plot = gse_female_4hr_dotplot, width = 14, height = 6) 
-
-cnetplot(gse_female_4hr, categorySize="pvalue", foldChange=gene_list)
-ridgeplot(gse_female_4hr) + labs(x = "enrichment distribution")
-```
-
-
-
-```{r}
-# We will lose some genes here because not all IDs will be converted
-ids<-bitr(names(original_gene_list), fromType = "SYMBOL", toType = "ENTREZID", OrgDb=organism)
- # remove duplicate IDS (here I use "ENSEMBL", but it should be whatever was selected as keyType)
-dedup_ids = ids[!duplicated(ids[c("SYMBOL")]),]
-
-df2 = top_female[top_female$gene %in% dedup_ids$SYMBOL,]
-df2$Y = dedup_ids$ENTREZID
-kegg_gene_list <- df2$`Female_4.Female_2`
-names(kegg_gene_list) <- df2$Y
-kegg_gene_list<-na.omit(kegg_gene_list)
-kegg_gene_list = sort(kegg_gene_list, decreasing = TRUE)
-
-kegg_organism = "dme"
-kk2 <- gseKEGG(geneList     = kegg_gene_list,
-               organism     = kegg_organism,
-               nPerm        = 10000,
-               minGSSize    = 3,
-               maxGSSize    = 800,
-               pvalueCutoff = 0.05,
-               pAdjustMethod = "none",
-               keyType       = "ncbi-geneid")
-
-direction_labs <- c("Up-regulated", "Down-regulated")
-names(direction_labs) <- c("activated", "suppressed")
-
-(gse_kegg_female_4hr_dotplot <- dotplot(kk2, showCategory=10, split=".sign") +
-  facet_grid(.~.sign, labeller = labeller(.sign = direction_labs)) +
-  theme(strip.background = element_rect(fill = "white"), aspect.ratio = 1) +
-  ggtitle("Enriched KEGG pathways in female hemocytes 4 hours post injection"))
-#ggsave("Results/limma/gse_kegg_female_4hr_dotplot.png", plot = gse_kegg_female_4hr_dotplot, width = 14, height = 6) 
-```
-
-
- 
-### GSEA
-```{r}
-top_female_gsea <- cbind(top_female, Gene_ID_Flybase[match(top_female$gene, Gene_ID_Flybase$Gene_name), "CG_ID"])
-colnames(top_female_gsea)[ncol(top_female_gsea)] = "CG_ID"
-
-ranks <- top_female_gsea$`Female_2.Female_0`[!is.na(top_female_gsea$`Female_2.Female_0`)]
-names(ranks) <- top_female_gsea$CG_ID[!is.na(top_female_gsea$`Female_2.Female_0`)]
-head(ranks)
-barplot(sort(ranks, decreasing = T))
-
-fgseaRes_female_2hr <- fgsea(t_Drosophila_REACTOME, ranks, minSize = 15, maxSize = 500)
-head(fgseaRes_female_2hr[order(padj, -abs(NES)), ], n=10)
-
-fgseaRes_KEGG_female_2hr <- fgsea(t_Drosophila_KEGG, ranks, minSize = 15, maxSize = 500)
-head(fgseaRes_KEGG_female_2hr[order(padj, -abs(NES)), ], n=10)
-
-
-#### 4 hours
-ranks <- top_female_gsea$`Female_4.Female_2`[!is.na(top_female_gsea$`Female_4.Female_2`)]
-names(ranks) <- top_female_gsea$CG_ID[!is.na(top_female_gsea$`Female_4.Female_2`)]
-head(ranks)
-barplot(sort(ranks, decreasing = T))
-
-fgseaRes_female_4hr <- fgsea(t_Drosophila_REACTOME, ranks, minSize = 15, maxSize = 500)
-head(fgseaRes_female_4hr[order(padj, -abs(NES)), ], n=10)
-
-fgseaRes_KEGG_female_4hr <- fgsea(t_Drosophila_KEGG, ranks, minSize = 15, maxSize = 500)
-head(fgseaRes_KEGG_female_4hr[order(padj, -abs(NES)), ], n=10)
-```
-
-### Volcano plot KEGG
-```{r}
-colors_vol <- c(rev(colors_inf), "darkgrey")
-fgseaRes_KEGG_female_2hr <- fgseaRes_KEGG_female_2hr %>% 
-  mutate(color = factor(case_when(NES >= 1 & padj < 0.05 ~ "blue", 
-                                  NES <= -1 & padj < 0.05 ~ "red", 
-                                  NES %in% c(-1:1) ~ "grey"))) %>% 
-  mutate(significance = case_when(NES >= 1 ~ "yes", NES <= -1 ~ "yes"))
-significant <- subset(fgseaRes_KEGG_female_2hr, significance=="yes")
-sig_genes <- significant$gene
-
-fgseaRes_KEGG_female_2hr$color <- as.character(fgseaRes_KEGG_female_2hr$color)
-fgseaRes_KEGG_female_2hr$color <- replace_na(fgseaRes_KEGG_female_2hr$color,"black")
-
-(nes_f_2h <- ggplot(fgseaRes_KEGG_female_2hr, aes(x = NES, y = -log10(padj), label = pathway)) +
-  geom_point(aes(color = color), alpha = 0.5)+
-  geom_text_repel(data = fgseaRes_KEGG_female_2hr %>% filter(NES < -1 | NES > 1) %>% filter(pval <0.05), aes(label = pathway)) +
-  geom_vline(xintercept=1,color="darkgrey", linetype = "dotted")+
-  geom_vline(xintercept=-1,color="darkgrey", linetype = "dotted")+
-  geom_hline(yintercept=-log10(0.05),color="darkgrey",linetype="dashed") +
-  theme_bw() +
-  scale_colour_manual(limits=c("blue","red", "black"),
-                      values = colors_vol,
-                      labels=c("Upregulated after infection","Downregulated after infection","ns")) +
-  labs(color = "") +
-  ggtitle("Enriched KEGG pathways in female hemocytes after infection (2h)") +
-  theme(aspect.ratio = 1))
-#ggsave("Results/limma/f_2h_kegg_volcano.png", plot = nes_f_2h, width = 8, height = 6) 
-
-#### 4 hours
-
-colors_vol <- c(rev(colors_inf), "darkgrey")
-fgseaRes_KEGG_female_4hr <- fgseaRes_KEGG_female_4hr %>% 
-  mutate(color = factor(case_when(NES >= 1 & padj < 0.05 ~ "blue", 
-                                  NES <= -1 & padj < 0.05 ~ "red", 
-                                  NES %in% c(-1:1) ~ "grey"))) %>% 
-  mutate(significance = case_when(NES >= 1 ~ "yes", NES <= -1 ~ "yes"))
-significant <- subset(fgseaRes_KEGG_female_4hr, significance=="yes")
-sig_genes <- significant$gene
-
-fgseaRes_KEGG_female_4hr$color <- as.character(fgseaRes_KEGG_female_4hr$color)
-fgseaRes_KEGG_female_4hr$color <- replace_na(fgseaRes_KEGG_female_4hr$color,"black")
-
-(nes_f_4h <- ggplot(fgseaRes_KEGG_female_4hr, aes(x = NES, y = -log10(padj), label = pathway)) +
-  geom_point(aes(color = color), alpha = 0.5)+
-  geom_text_repel(data = fgseaRes_KEGG_female_4hr %>% filter(NES < -1 | NES > 1) %>% filter(pval <0.07), aes(label = pathway)) +
-  geom_vline(xintercept=1,color="darkgrey", linetype = "dotted")+
-  geom_vline(xintercept=-1,color="darkgrey", linetype = "dotted")+
-  geom_hline(yintercept=-log10(0.05),color="darkgrey",linetype="dashed") +
-  theme_bw() +
-  scale_colour_manual(limits=c("blue","red", "black"),
-                      values = colors_vol,
-                      labels=c("Upregulated after infection","Downregulated after infection","ns")) +
-  labs(color = "") +
-  ggtitle("Enriched KEGG pathways in female hemocytes after infection (4h)") +
-  theme(aspect.ratio = 1))
-#ggsave("Results/limma/f_4h_kegg_volcano.png", plot = nes_f_4h, width = 8, height = 6) 
-```
-
-
-
-
-## Male 
-```{r}
-top_male$gene <- rownames(top_male)
-
-gg_top_dif <- dat_fpkm_hem
-colnames(gg_top_dif) <- data_colnames
-gg_top_dif <- gg_top_dif %>% 
-  mutate(gene = rownames(gg_top_dif)) %>% 
-  filter(gene %in% top_male$gene) %>% 
-  select(-gene) %>% 
-  select(!contains("F_"))
-
-library(heatmap3)
-library(viridis)
-library(gridGraphics)
-colors <- colorRampPalette( viridis(9) )(28236)
-
-mat_top_dif <- as.matrix(gg_top_dif)
-
-mat_top_dif <- mat_top_dif - rowMeans(mat_top_dif)
-
-# heatmap3(mat_top_dif, trace = "none", col = colors, labCol = NULL, labRow = rownames(mat_top_dif), RowSideLabs = F, ColSideLabs = F, mar = c(5, 12), key.title = "Expression", cexRow = 1, scale = "row")
-# grid.echo()
-# male_time_heatmap <- grid.grab()
-# 
-# png(filename = "Results/limma/male_time_heatmap.png", width = 1000, height = 2000, units = "px")
-# grid.draw(male_time_heatmap)
-# dev.off()
-
-
-# library(heatmaply)
-# 
-# (heat_time <- heatmaply(mat_top_dif, xlab = "", ylab = "", main = "", scale = "column",
-#           margins = c(60,100,40,20), 
-#           grid_width = 0.00001, titleX = FALSE,
-#           hide_colorbar = TRUE, branches_lwd = 0.1, 
-#           label_names = c("Gene", "Sample", "Value"),
-#           fontsize_row = 10, fontsize_col = 10,
-#           labCol = colnames(mat_top_dif),
-#           labRow = rownames(mat_top_dif),
-#           heatmap_layers = theme(axis.line = element_blank())))
-
-
-top_male_gg <- top_male %>% 
-  mutate(direction_2 = case_when(Male_2.Male_0 <0 ~ "2h_neg",
-                                 Male_2.Male_0 >0 ~ "2h_pos"),
-         direction_4 = case_when(Male_4.Male_2 <0 ~ "4h_neg",
-                                 Male_4.Male_2 >0 ~ "4h_pos")) %>% 
-  select(gene, direction_2, direction_4) %>% 
-  mutate(direction = paste(direction_2, direction_4))
-# top_genes_f <- top_female %>% 
-#   select(direction, gene)
-# 
-# top_genes <- top_male  %>% 
-#   select(direction, gene) %>% 
-#   rbind(top_genes_f) 
-
-gg_top_dif <- gg_top_dif %>% 
-  mutate(gene = rownames(gg_top_dif)) %>% 
-  inner_join(top_male_gg, by = "gene") %>% 
-  pivot_longer(cols = 1:13, names_to = "sample", values_to = "count") %>% 
-  separate(sample, into = c("Sex", "Time", "hem", "rep")) %>% 
-  mutate(time_hours = case_when(Time == "2h" ~ 2,
-                                Time == "4h" ~ 4,
-                                Time == "UC" ~ 0)) %>% 
-  group_by(Sex, time_hours, gene) %>% 
-  mutate(avg_count = mean(count)) %>% 
-  filter(direction %in% c("2h_neg 4h_neg", "2h_neg 4h_pos", "2h_pos 4h_neg", "2h_pos 4h_pos"))
-
-(male_plot <- ggplot(gg_top_dif, aes(x = time_hours, y = avg_count, color = gene)) +
-  geom_line() +
-  geom_point(aes(y = count)) +
-  theme_bw() +
-  theme(legend.position = "none", aspect.ratio = 1) +
-  facet_wrap(~direction, scales = "free") +
-  ylab("Gene counts (fpkm)") +
-  xlab("Hours post injection"))
-#ggsave("Results/limma/male_top_genes_time.png", male_plot, width = 7, height = 6)
-```
-
-## Volcano plot 
-```{r}
-top_Male_vol <- top_male %>% 
-  mutate(color_2 = case_when(`Male_2.Male_0` > 2 & P.Value < 0.05 ~ "Upregulated at 2 hrs",
-                           `Male_2.Male_0` < -2 & P.Value < 0.05 ~ "Downregulated at 2 hrs",
-                           TRUE ~ "NS"),
-         color_4 = case_when(`Male_4.Male_2` > 2 & P.Value < 0.05 ~ "Upregulated at 4 hrs",
-                           `Male_4.Male_2` < -2 & P.Value < 0.05 ~ "Downregulated at 4 hrs",
-                           TRUE ~ "NS"))
-top_Male_vol$gene <- base::rownames(top_Male_vol)
-  
-
-(Male_volcano_2 <- top_Male_vol %>% 
- # filter(dif2hr > -2710) %>% 
- # filter(dif2hr < 1184) %>% 
-  ggplot(aes(x = `Male_2.Male_0`, y = -log10(P.Value), label = gene)) +
+(time_volcano_4 <- top_time_vol %>% 
+  ggplot(aes(x = `Hr_4.Hr_2`, y = -log10(P.Value), label = gene_name)) +
   geom_point(aes(color = color_4)) +
-  geom_text_repel(data = top_Male_vol %>% filter(!color_4 == "NS"), aes(label = gene)) +
-  scale_color_manual(values = c("#000004", "lightgrey", "#FEC98D"), name = NULL) +
+  geom_text_repel(data = top_time_vol %>% filter(!color_4 == "NS"), aes(label = gene_name)) +
+  scale_color_manual(values = c("#000004", "lightgrey", "#F56B5C"), name = NULL) +
   theme_bw() +
-  xlab("Log2 Fold Change at 2 hours") +
-  ylab("-log10(P value)") +
-  ggtitle("Genes differentially expressed in male hemocytes 2 hours after S. aureus injection"))
-
-(Male_volcano_4 <- top_Male_vol %>% 
- # filter(dif2hr > -2710) %>% 
- # filter(dif2hr < 1184) %>% 
-  ggplot(aes(x = `Male_4.Male_2`, y = -log10(P.Value), label = gene)) +
-  geom_point(aes(color = color_2)) +
-  geom_text_repel(data = top_Male_vol %>% filter(!color_2 == "NS"), aes(label = gene)) +
-  scale_color_manual(values = c("#000004", "lightgrey", "#FEC98D"), name = NULL) +
-  theme_bw() +
+  theme(aspect.ratio = 1) +
   xlab("Log2 Fold Change at 4 hours") +
   ylab("-log10(P value)") +
-  ggtitle("Genes differentially expressed in male hemocytes 4 hours after S. aureus injection"))
+  ggtitle("Genes differentially expressed in hemocytes \n(4 hours post injection versus 2 hours post injection)"))
   
-#ggsave("Results/limma/Male_volcano_2hr.png", Male_volcano_2, width = 8, height = 6)  
-#ggsave("Results/limma/Male_volcano_4hr.png", Male_volcano_4, width = 8, height = 6)
+# ggsave("results/volcano_2hr.png", time_volcano_2, width = 6, height = 4)  
+# ggsave("results/volcano_4hr.png", time_volcano_4, width = 6, height = 4)
 ```
 
 
 
-
-
-
+# ClusterProfiler GSEA
+## 2 hr
 ```{r}
-male_down_genes <- top_male_gg %>% 
-  filter(direction == "2h_neg 4h_neg") %>% 
-  left_join(top_male, by = "gene")
-male_up_genes <- top_male_gg %>% 
-  filter(direction == "2h_pos 4h_pos") %>% 
-  left_join(top_male, by = "gene")
-male_down_up_genes <- top_male_gg %>% 
-  filter(direction == "2h_neg 4h_pos") %>% 
-  left_join(top_male, by = "gene")
-male_up_down_genes <- top_male_gg %>% 
-  filter(direction == "2h_pos 4h_neg") %>% 
-  left_join(top_male, by = "gene")
-```
-
-
-
-```{r}
-top_male <- cbind(top_male, Gene_ID_Flybase[match(top_male$gene, Gene_ID_Flybase$Gene_name), "CG_ID"])
-colnames(top_male)[ncol(top_male)] = "CG_ID"
-
-ranks <- top_male$Male_2.Male_0[!is.na(top_male$Male_2.Male_0)]
-names(ranks) <- top_male$CG_ID[!is.na(top_male$Male_2.Male_0)]
-head(ranks)
-barplot(sort(ranks, decreasing = T))
-
-fgseaRes_male <- fgsea(t_Drosophila_REACTOME, ranks, minSize = 15, maxSize = 500)
-head(fgseaRes_male[order(padj, -abs(NES)), ], n=10)
-plotEnrichment(t_Drosophila_REACTOME[["Metabolism"]], ranks) +
-  ggtitle("Metabolism genes are downregulated in males in first 2hrs of infection")
-
-fgseaRes_KEGG_male <- fgsea(t_Drosophila_KEGG, ranks, minSize = 15, maxSize = 500)
-head(fgseaRes_male[order(padj, -abs(NES)), ], n=10)
-```
-
-
-### Male ClusterProfiler GSEA
-```{r}
-# BiocManager::install("clusterProfiler")
-# if (!require("BiocManager", quietly = TRUE))
-#     install.packages("BiocManager")
-# 
-# BiocManager::install("pathview")
-# BiocManager::install("enrichplot")
-library(clusterProfiler)
-library(enrichplot)
-library(ggplot2)
-
-```
-
-```{r}
-organism = "org.Dm.eg.db"
-#BiocManager::install(organism, character.only = TRUE)
-library(organism, character.only = TRUE)
-```
-
-```{r}
-original_gene_list <- top_male$`Male_2.Male_0`
-names(original_gene_list) <- rownames(top_male)
+top_dif_gsea <- top_dif %>% 
+  mutate(gene = rownames(.)) %>% 
+  left_join(gene_names_fb, by = c("gene" = "gene_name"))
+original_gene_list <- top_dif_gsea$dif2hr
+names(original_gene_list) <- (top_dif_gsea$gene_id)
 gene_list <- na.omit(original_gene_list)
 gene_list <- sort(gene_list, decreasing = TRUE)
 
 gse <- gseGO(geneList = gene_list,
              ont = "ALL",
-             keyType = "SYMBOL",
-             minGSSize = 3,
-             maxGSSize = 800,
-             pvalueCutoff = 0.05,
-             verbose = TRUE,
-             OrgDb = organism,
-             pAdjustMethod = "none")
-
-gse_male_2hr <- gse
-```
-
-
-```{r}
-require(DOSE)
-
-direction_labs <- c("Up-regulated", "Down-regulated")
-names(direction_labs) <- c("activated", "suppressed")
-
-(gse_male_2hr_dotplot <- dotplot(gse_male_2hr, showCategory=10, split=".sign") +
-  facet_grid(.~.sign, labeller = labeller(.sign = direction_labs)) +
-  theme(strip.background = element_rect(fill = "white")) +
-  ggtitle("Enriched gene sets in male hemocytes 2 hours post injection"))
-#ggsave("Results/limma/gse_male_2hr_dotplot.png", plot = gse_male_2hr_dotplot, width = 14, height = 6) 
-
-```
-
-
-#### KEGG
-```{r}
-# We will lose some genes here because not all IDs will be converted
-ids<-bitr(names(original_gene_list), fromType = "SYMBOL", toType = "ENTREZID", OrgDb=organism)
- # remove duplicate IDS (here I use "ENSEMBL", but it should be whatever was selected as keyType)
-dedup_ids = ids[!duplicated(ids[c("SYMBOL")]),]
-
-df2 = top_male[top_male$gene %in% dedup_ids$SYMBOL,]
-df2$Y = dedup_ids$ENTREZID
-kegg_gene_list <- df2$`Male_2.Male_0`
-names(kegg_gene_list) <- df2$Y
-kegg_gene_list<-na.omit(kegg_gene_list)
-kegg_gene_list = sort(kegg_gene_list, decreasing = TRUE)
-
-kegg_organism = "dme"
-kk2 <- gseKEGG(geneList     = kegg_gene_list,
-               organism     = kegg_organism,
-               nPerm        = 10000,
-               minGSSize    = 3,
-               maxGSSize    = 800,
-               pvalueCutoff = 0.05,
-               pAdjustMethod = "none",
-               keyType       = "ncbi-geneid")
-
-direction_labs <- c("Up-regulated", "Down-regulated")
-names(direction_labs) <- c("activated", "suppressed")
-
-(gse_kegg_male_2hr_dotplot <- dotplot(kk2, showCategory=10, split=".sign") +
-  facet_grid(.~.sign, labeller = labeller(.sign = direction_labs)) +
-  theme(strip.background = element_rect(fill = "white")) +
-  ggtitle("Enriched KEGG pathways in male hemocytes 2 hours post injection"))
-#ggsave("Results/limma/gse_kegg_male_2hr_dotplot.png", plot = gse_kegg_male_2hr_dotplot, width = 14, height = 6) 
-```
-
-
-```{r}
-original_gene_list <- top_male$`Male_4.Male_2`
-names(original_gene_list) <- rownames(top_male)
-gene_list <- na.omit(original_gene_list)
-gene_list <- sort(gene_list, decreasing = TRUE)
-
-gse <- gseGO(geneList = gene_list,
-             ont = "ALL",
-             keyType = "SYMBOL",
-             minGSSize = 3,
-             maxGSSize = 800,
-             pvalueCutoff = 0.05,
-             verbose = TRUE,
-             OrgDb = organism,
-             pAdjustMethod = "none")
-
-gse_male_4hr <- gse
-```
-
-
-```{r}
-require(DOSE)
-
-direction_labs <- c("Up-regulated", "Down-regulated")
-names(direction_labs) <- c("activated", "suppressed")
-
-(gse_male_4hr_dotplot <- dotplot(gse_male_4hr, showCategory=10, split=".sign") +
-  facet_grid(.~.sign, labeller = labeller(.sign = direction_labs)) +
-  theme(strip.background = element_rect(fill = "white"), aspect.ratio = 1) +
-  ggtitle("Enriched gene sets in male hemocytes 4 hours post injection"))
-#ggsave("Results/limma/gse_male_4hr_dotplot.png", plot = gse_male_4hr_dotplot, width = 14, height = 6) 
-
-```
-
-
-```{r}
-# We will lose some genes here because not all IDs will be converted
-ids<-bitr(names(original_gene_list), fromType = "SYMBOL", toType = "ENTREZID", OrgDb=organism)
- # remove duplicate IDS (here I use "ENSEMBL", but it should be whatever was selected as keyType)
-dedup_ids = ids[!duplicated(ids[c("SYMBOL")]),]
-
-df2 = top_male[top_male$gene %in% dedup_ids$SYMBOL,]
-df2$Y = dedup_ids$ENTREZID
-kegg_gene_list <- df2$`Male_4.Male_2`
-names(kegg_gene_list) <- df2$Y
-kegg_gene_list<-na.omit(kegg_gene_list)
-kegg_gene_list = sort(kegg_gene_list, decreasing = TRUE)
-
-kegg_organism = "dme"
-kk2 <- gseKEGG(geneList     = kegg_gene_list,
-               organism     = kegg_organism,
-               nPerm        = 10000,
-               minGSSize    = 3,
-               maxGSSize    = 800,
-               pvalueCutoff = 0.05,
-               pAdjustMethod = "none",
-               keyType       = "ncbi-geneid")
-
-direction_labs <- c("Up-regulated", "Down-regulated")
-names(direction_labs) <- c("activated", "suppressed")
-
-(gse_kegg_male_4hr_dotplot <- dotplot(kk2, showCategory=10, split=".sign") +
-  facet_grid(.~.sign, labeller = labeller(.sign = direction_labs)) +
-  theme(strip.background = element_rect(fill = "white"), aspect.ratio = 1) +
-  ggtitle("Enriched KEGG pathways in male hemocytes 4 hours post injection"))
-#ggsave("Results/limma/gse_kegg_male_4hr_dotplot.png", plot = gse_kegg_male_4hr_dotplot, width = 8, height = 6) 
-```
-
- 
-### GSEA
-```{r}
-top_male_gsea <- cbind(top_male, Gene_ID_Flybase[match(top_male$gene, Gene_ID_Flybase$Gene_name), "CG_ID"])
-colnames(top_male_gsea)[ncol(top_male_gsea)] = "CG_ID"
-
-ranks <- top_male_gsea$`Male_2.Male_0`[!is.na(top_male_gsea$`Male_2.Male_0`)]
-names(ranks) <- top_male_gsea$CG_ID[!is.na(top_male_gsea$`Male_2.Male_0`)]
-head(ranks)
-barplot(sort(ranks, decreasing = T))
-
-fgseaRes_male_2hr <- fgsea(t_Drosophila_REACTOME, ranks, minSize = 15, maxSize = 500)
-head(fgseaRes_male_2hr[order(padj, -abs(NES)), ], n=10)
-
-fgseaRes_KEGG_male_2hr <- fgsea(t_Drosophila_KEGG, ranks, minSize = 15, maxSize = 500)
-head(fgseaRes_KEGG_male_2hr[order(padj, -abs(NES)), ], n=10)
-
-
-#### 4 hours
-ranks <- top_male_gsea$`Male_4.Male_2`[!is.na(top_male_gsea$`Male_4.Male_2`)]
-names(ranks) <- top_male_gsea$CG_ID[!is.na(top_male_gsea$`Male_4.Male_2`)]
-head(ranks)
-barplot(sort(ranks, decreasing = T))
-
-fgseaRes_male_4hr <- fgsea(t_Drosophila_REACTOME, ranks, minSize = 15, maxSize = 500)
-head(fgseaRes_male_4hr[order(padj, -abs(NES)), ], n=10)
-
-fgseaRes_KEGG_male_4hr <- fgsea(t_Drosophila_KEGG, ranks, minSize = 15, maxSize = 500)
-head(fgseaRes_KEGG_male_4hr[order(padj, -abs(NES)), ], n=10)
-```
-
-### Volcano plot KEGG
-```{r}
-colors_vol <- c(rev(colors_inf), "darkgrey")
-fgseaRes_KEGG_male_2hr <- fgseaRes_KEGG_male_2hr %>% 
-  mutate(color = factor(case_when(NES >= 1 & padj < 0.05 ~ "blue", 
-                                  NES <= -1 & padj < 0.05 ~ "red", 
-                                  NES %in% c(-1:1) ~ "grey"))) %>% 
-  mutate(significance = case_when(NES >= 1 ~ "yes", NES <= -1 ~ "yes"))
-significant <- subset(fgseaRes_KEGG_male_2hr, significance=="yes")
-sig_genes <- significant$gene
-
-fgseaRes_KEGG_male_2hr$color <- as.character(fgseaRes_KEGG_male_2hr$color)
-fgseaRes_KEGG_male_2hr$color <- replace_na(fgseaRes_KEGG_male_2hr$color,"black")
-
-(nes_m_2h <- ggplot(fgseaRes_KEGG_male_2hr, aes(x = NES, y = -log10(padj), label = pathway)) +
-  geom_point(aes(color = color), alpha = 0.5)+
-  geom_text_repel(data = fgseaRes_KEGG_male_2hr %>% filter(NES < -1 | NES > 1) %>% filter(pval <0.05), aes(label = pathway)) +
-  geom_vline(xintercept=1,color="darkgrey", linetype = "dotted")+
-  geom_vline(xintercept=-1,color="darkgrey", linetype = "dotted")+
-  geom_hline(yintercept=-log10(0.05),color="darkgrey",linetype="dashed") +
-  theme_bw() +
-  scale_colour_manual(limits=c("blue","red", "black"),
-                      values = colors_vol,
-                      labels=c("Upregulated after infection","Downregulated after infection","ns")) +
-  labs(color = "") +
-  ggtitle("Enriched KEGG pathways in male hemocytes after infection (2h)") +
-  theme(aspect.ratio = 1))
-#ggsave("Results/limma/m_2h_kegg_volcano.png", plot = nes_m_2h, width = 8, height = 6) 
-
-#### 4 hours
-
-colors_vol <- c(rev(colors_inf), "darkgrey")
-fgseaRes_KEGG_male_4hr <- fgseaRes_KEGG_male_4hr %>% 
-  mutate(color = factor(case_when(NES >= 1 & padj < 0.05 ~ "blue", 
-                                  NES <= -1 & padj < 0.05 ~ "red", 
-                                  NES %in% c(-1:1) ~ "grey"))) %>% 
-  mutate(significance = case_when(NES >= 1 ~ "yes", NES <= -1 ~ "yes"))
-significant <- subset(fgseaRes_KEGG_male_4hr, significance=="yes")
-sig_genes <- significant$gene
-
-fgseaRes_KEGG_male_4hr$color <- as.character(fgseaRes_KEGG_male_4hr$color)
-fgseaRes_KEGG_male_4hr$color <- replace_na(fgseaRes_KEGG_male_4hr$color,"black")
-
-(nes_m_4h <- ggplot(fgseaRes_KEGG_male_4hr, aes(x = NES, y = -log10(padj), label = pathway)) +
-  geom_point(aes(color = color), alpha = 0.5)+
-  geom_text_repel(data = fgseaRes_KEGG_male_4hr %>% filter(NES < -1 | NES > 1) %>% filter(pval <0.05), aes(label = pathway)) +
-  geom_vline(xintercept=1,color="darkgrey", linetype = "dotted")+
-  geom_vline(xintercept=-1,color="darkgrey", linetype = "dotted")+
-  geom_hline(yintercept=-log10(0.05),color="darkgrey",linetype="dashed") +
-  theme_bw() +
-  scale_colour_manual(limits=c("blue","red", "black"),
-                      values = colors_vol,
-                      labels=c("Upregulated after infection","Downregulated after infection","ns")) +
-  labs(color = "") +
-  ggtitle("Enriched KEGG pathways in male hemocytes after infection (4h)") +
-  theme(aspect.ratio = 1))
-#ggsave("Results/limma/m_4h_kegg_volcano.png", plot = nes_m_4h, width = 8, height = 6) 
-```
-
-
-
-
-
-## Both sexes 
-```{r}
-top_dif <- top_dif %>% 
-  mutate(gene = rownames(top_dif)) %>% 
-  filter(adj.P.Val < 0.05)
-gg_top_dif <- dat_fpkm_hem
-colnames(gg_top_dif) <- data_colnames
-gg_top_dif <- gg_top_dif %>% 
-  mutate(gene = rownames(gg_top_dif)) %>% 
-  filter(gene %in% top_dif$gene) %>% 
-  select(-gene)
-
-library(heatmap3)
-library(viridis)
-colors <- colorRampPalette( viridis(9) )(28236)
-
-mat_top_dif <- as.matrix(gg_top_dif)
-
-mat_top_dif <- mat_top_dif - rowMeans(mat_top_dif)
-
-heatmap3(mat_top_dif, trace = "none", col = colors, labCol = NULL, labRow = rownames(mat_top_dif), RowSideLabs = F, ColSideLabs = F, mar = c(5, 12), key.title = "Expression", cexRow = 1, scale = "row")
-# grid.echo()
-# time_heatmap <- grid.grab()
-# 
-# png(filename = "Results/limma/time_heatmap.png", width = 1000, height = 2000, units = "px")
-# grid.draw(time_heatmap)
-# dev.off()
-
-
-library(heatmaply)
-
-(heat_time <- heatmaply(mat_top_dif, xlab = "", ylab = "", main = "", scale = "column",
-          margins = c(60,100,40,20), 
-          grid_width = 0.00001, titleX = FALSE,
-          hide_colorbar = TRUE, branches_lwd = 0.1, 
-          label_names = c("Gene", "Sample", "Value"),
-          fontsize_row = 10, fontsize_col = 10,
-          labCol = colnames(mat_top_dif),
-          labRow = rownames(mat_top_dif),
-          heatmap_layers = theme(axis.line = element_blank())))
-```
-
-
-```{r}
-
-top_dif_gg <- top_dif %>% 
-  mutate(direction_2 = case_when(dif2hr <0 ~ "2h_neg",
-                                 dif2hr >0 ~ "2h_pos"),
-         direction_4 = case_when(dif4hr <0 ~ "4h_neg",
-                                 dif4hr >0 ~ "4h_pos")) %>% 
-  select(gene, direction_2, direction_4) %>% 
-  mutate(direction = paste(direction_2, direction_4))
-
-gg_top_dif <- dat_fpkm_hem
-colnames(gg_top_dif) <- data_colnames
-gg_top_dif <- gg_top_dif %>% 
-  mutate(gene = rownames(gg_top_dif)) %>% 
-  filter(gene %in% top_dif$gene) %>% 
-  select(-gene)
-
-gg_both <- gg_top_dif %>% 
-  mutate(gene = rownames(gg_top_dif)) %>% 
-  inner_join(top_dif_gg, by = "gene") %>% 
-  pivot_longer(cols = 1:27, names_to = "sample", values_to = "count") %>% 
-  separate(sample, into = c("Sex", "Time", "hem", "rep")) %>% 
-  mutate(time_hours = case_when(Time == "2h" ~ 2,
-                                Time == "4h" ~ 4,
-                                Time == "UC" ~ 0)) %>% 
-  group_by(Sex, time_hours, gene) %>% 
-  mutate(avg_count = mean(count))
-
-gg_both %>% 
-  filter(direction_2 == "2h_pos") %>% 
-  distinct(gene, direction_2, direction_4, direction, Sex, Time, time_hours, avg_count) %>% 
-  ggplot(aes(x = time_hours, y = avg_count, color = gene)) +
-    geom_line() +
-    geom_text_repel(aes(label = gene)) +
-  facet_wrap(~Sex) +
-  theme(legend.position = "none")
-
-gg_both %>% 
-  filter(direction_2 == "2h_neg") %>% 
-  distinct(gene, direction_2, direction_4, direction, Sex, Time, time_hours, avg_count) %>% 
-  ggplot(aes(x = time_hours, y = avg_count, color = gene)) +
-    geom_line() +
-    geom_text_repel(aes(label = gene)) +
-  facet_wrap(~Sex) +
-  theme(legend.position = "none")
-
-(time_indiv_plots <- gg_both %>% 
-  ggplot(aes(x = time_hours, y = count, color = Sex, fill = Sex)) +
-    geom_smooth() +
-  facet_wrap(~gene, scales = "free_y") +
-  scale_color_manual(values = colors_sex) +
-  scale_fill_manual(values = colors_sex) +
-  theme_bw() +
-  theme(aspect.ratio = 1, strip.background = element_rect(fill = "white")) +
-  xlab("Time post S. aureus injection (hours)") +
-  ylab("Gene counts (fpkm)"))
-#ggsave("Results/limma/time_indiv_points.png", time_indiv_plots, width = 12, height = 10)
-
-ggplot(gg_both, aes(x = time_hours, y = avg_count, color = gene)) +
-  geom_line() +
-  geom_text_repel(aes(x = 2, label = gene)) +
-  facet_grid(Sex~direction) +
-  theme(legend.position = "none")
-```
-
-
-
-### ClusterProfiler GSEA
-```{r}
-# BiocManager::install("clusterProfiler")
-# if (!require("BiocManager", quietly = TRUE))
-#     install.packages("BiocManager")
-# 
-# BiocManager::install("pathview")
-# BiocManager::install("enrichplot")
-library(clusterProfiler)
-library(enrichplot)
-library(ggplot2)
-
-```
-
-```{r}
-organism = "org.Dm.eg.db"
-#BiocManager::install(organism, character.only = TRUE)
-library(organism, character.only = TRUE)
-```
-##### 2 hr
-```{r}
-original_gene_list <- top_dif$dif2hr
-names(original_gene_list) <- rownames(top_dif)
-gene_list <- na.omit(original_gene_list)
-gene_list <- sort(gene_list, decreasing = TRUE)
-
-gse <- gseGO(geneList = gene_list,
-             ont = "ALL",
-             keyType = "SYMBOL",
+             keyType = "FLYBASE",
              minGSSize = 3,
              maxGSSize = 800,
              pvalueCutoff = 0.05,
@@ -1198,15 +431,14 @@ names(direction_labs) <- c("activated", "suppressed")
 #ggsave("Results/limma/gse_both_2hr_dotplot.png", plot = gse_both_2hr_dotplot, width = 14, height = 6) 
 ```
  
-#### KEGG
+### KEGG
 ```{r}
-top_dif$gene <- rownames(top_dif)
 # We will lose some genes here because not all IDs will be converted
-ids<-bitr(names(original_gene_list), fromType = "SYMBOL", toType = "ENTREZID", OrgDb=organism)
+ids<-bitr(names(original_gene_list), fromType = "FLYBASE", toType = "ENTREZID", OrgDb=organism)
  # remove duplicate IDS (here I use "ENSEMBL", but it should be whatever was selected as keyType)
-dedup_ids = ids[!duplicated(ids[c("SYMBOL")]),]
+dedup_ids = ids[!duplicated(ids[c("FLYBASE")]),]
 
-df2 = top_dif[top_dif$gene %in% dedup_ids$SYMBOL,]
+df2 = top_dif_gsea[top_dif_gsea$gene_id %in% dedup_ids$FLYBASE,]
 df2$Y = dedup_ids$ENTREZID
 kegg_gene_list <- df2$dif2hr
 names(kegg_gene_list) <- df2$Y
@@ -1214,7 +446,7 @@ kegg_gene_list<-na.omit(kegg_gene_list)
 kegg_gene_list = sort(kegg_gene_list, decreasing = TRUE)
 
 kegg_organism = "dme"
-kk2 <- gseKEGG(geneList     = kegg_gene_list,
+kegg_dif_2hr <- gseKEGG(geneList     = kegg_gene_list,
                organism     = kegg_organism,
                nPerm        = 10000,
                minGSSize    = 3,
@@ -1223,26 +455,28 @@ kk2 <- gseKEGG(geneList     = kegg_gene_list,
                pAdjustMethod = "none",
                keyType       = "ncbi-geneid")
 
-direction_labs <- c("Up-regulated", "Down-regulated")
+direction_labs <- c("Positive fold-change", "Negative fold-change")
 names(direction_labs) <- c("activated", "suppressed")
 
-(gse_kegg_both_2hr_dotplot <- dotplot(kk2, showCategory=10, split=".sign") +
+
+
+(gse_kegg_both_2hr_dotplot <- dotplot((kegg_dif_2hr %>% filter(Description %in% c("Endocytosis", "Phagosome", "Toll and Imd signaling pathway"))), showCategory=10, split=".sign") +
   facet_grid(.~.sign, labeller = labeller(.sign = direction_labs)) +
-  theme(strip.background = element_rect(fill = "white")) +
-  ggtitle("Enriched KEGG pathways differentially regulated in hemocytes 2 hours post injection"))
-#ggsave("Results/limma/gse_kegg_both_2hr_dotplot.png", plot = gse_kegg_both_2hr_dotplot, width = 14, height = 6) 
+  theme(strip.background = element_rect(fill = "white"), aspect.ratio = 1) +
+  ggtitle("Enriched KEGG pathways differentially \nregulated in hemocytes 2 hours post injection"))
+#ggsave("results/gse_kegg_both_2hr_dotplot.png", plot = gse_kegg_both_2hr_dotplot, width = 7, height = 5) 
 ```
 
-##### 4 hr
+## 4 hr
 ```{r}
-original_gene_list <- top_dif$dif4hr
-names(original_gene_list) <- rownames(top_dif)
+original_gene_list <- top_dif_gsea$dif4hr
+names(original_gene_list) <- top_dif_gsea$gene_id
 gene_list <- na.omit(original_gene_list)
 gene_list <- sort(gene_list, decreasing = TRUE)
 
 gse <- gseGO(geneList = gene_list,
              ont = "ALL",
-             keyType = "SYMBOL",
+             keyType = "FLYBASE",
              minGSSize = 3,
              maxGSSize = 800,
              pvalueCutoff = 0.05,
@@ -1266,15 +500,14 @@ names(direction_labs) <- c("activated", "suppressed")
 #ggsave("Results/limma/gse_both_4hr_dotplot.png", plot = gse_both_4hr_dotplot, width = 14, height = 6) 
 ```
  
-#### KEGG
+### KEGG
 ```{r}
-top_dif$gene <- rownames(top_dif)
 # We will lose some genes here because not all IDs will be converted
-ids<-bitr(names(original_gene_list), fromType = "SYMBOL", toType = "ENTREZID", OrgDb=organism)
+ids<-bitr(names(original_gene_list), fromType = "FLYBASE", toType = "ENTREZID", OrgDb=organism)
  # remove duplicate IDS (here I use "ENSEMBL", but it should be whatever was selected as keyType)
-dedup_ids = ids[!duplicated(ids[c("SYMBOL")]),]
+dedup_ids = ids[!duplicated(ids[c("FLYBASE")]),]
 
-df2 = top_dif[top_dif$gene %in% dedup_ids$SYMBOL,]
+df2 = top_dif_gsea[top_dif_gsea$gene_id %in% dedup_ids$FLYBASE,]
 df2$Y = dedup_ids$ENTREZID
 kegg_gene_list <- df2$dif4hr
 names(kegg_gene_list) <- df2$Y
@@ -1282,7 +515,7 @@ kegg_gene_list<-na.omit(kegg_gene_list)
 kegg_gene_list = sort(kegg_gene_list, decreasing = TRUE)
 
 kegg_organism = "dme"
-kk2 <- gseKEGG(geneList     = kegg_gene_list,
+kegg_dif_4hr <- gseKEGG(geneList     = kegg_gene_list,
                organism     = kegg_organism,
                nPerm        = 10000,
                minGSSize    = 3,
@@ -1291,354 +524,376 @@ kk2 <- gseKEGG(geneList     = kegg_gene_list,
                pAdjustMethod = "none",
                keyType       = "ncbi-geneid")
 
-direction_labs <- c("Up-regulated", "Down-regulated")
+direction_labs <- c("Positive fold-change", "Negative fold-change")
 names(direction_labs) <- c("activated", "suppressed")
 
-(gse_kegg_both_4hr_dotplot <- dotplot(kk2, showCategory=10, split=".sign") +
+(gse_kegg_both_4hr_dotplot <- dotplot((kegg_dif_4hr %>% filter(Description %in% c("Endocytosis", "Phagosome", "Toll and Imd signaling pathway"))), showCategory=10, split=".sign") +
   facet_grid(.~.sign, labeller = labeller(.sign = direction_labs)) +
-  theme(strip.background = element_rect(fill = "white")) +
-  ggtitle("Enriched KEGG pathways differentially regulated in hemocytes 4 hours post injection"))
-#ggsave("Results/limma/gse_kegg_both_4hr_dotplot.png", plot = gse_kegg_both_4hr_dotplot, width = 14, height = 6) 
+  theme(strip.background = element_rect(fill = "white"), aspect.ratio = 1) +
+  ggtitle("Enriched KEGG pathways differentially \nregulated in hemocytes 4 hours post injection"))
+#ggsave("results/gse_kegg_both_4hr_dotplot.png", plot = gse_kegg_both_4hr_dotplot, width = 7, height = 5) 
+
 ```
 
-## WGCNA
+
+## Looking at dimorphic pathways 
 ```{r}
-# Uncomment and modify the following to install any missing packages
-# install.packages(c("tidyverse", "magrittr", "WGCNA))
-library(tidyverse)     # tidyverse will pull in ggplot2, readr, other useful libraries
-library(magrittr)      # provides the %>% operator
-library(WGCNA)   
+toll_imd_pathway <- kegg_dif_2hr@geneSets$dme04624
+endocytosis <- kegg_dif_2hr@geneSets$dme04144
+phagosome <- kegg_dif_2hr@geneSets$dme04145
+aminoacyle_bio <- kegg_dif_2hr@geneSets$dme00970
+mapk <- kegg_dif_2hr@geneSets$dme04013
+ox_phos <- kegg_dif_2hr@geneSets$dme00190
+globo_isoglobo <- kegg_dif_2hr@geneSets$dme00603
+ganglio <- kegg_dif_2hr@geneSets$dme00604
+hippo <- kegg_dif_2hr@geneSets$dme04391
+histidine <- kegg_dif_2hr@geneSets$dme00340
+processing <- kegg_dif_2hr@geneSets$dme04141
+glycan <- kegg_dif_2hr@geneSets$dme00511
 ```
 
+### Toll and Imd
 ```{r}
-col_sel <- names(count_data_hem_both)
+toll_imd_ids<-bitr(toll_imd_pathway, fromType = "ENTREZID", toType = "FLYBASE", OrgDb=organism)
+toll_imd_top_dif <- fpkm_counts %>% 
+  filter(gene_id %in% toll_imd_ids$FLYBASE) %>% 
+  select(contains("hem"))
 
-my_data <- count_data_hem_both %>% 
-  tidyr::pivot_longer(
-    .,
-    col = all_of(col_sel)
-  ) %>% 
-  mutate(group = gsub("_hem_.", "", name))
+library(heatmap3)
+library(viridis)
+library(gridGraphics)
+colors <- colorRampPalette( viridis(9) )(28236)
 
-# ==== Plot groups (Sample Groups vs RNA Seq Counts) to identify outliers
-(
- p <- my_data %>%
-    ggplot(., aes(x = name, y = value)) +             # x = treatment, y = RNA Seq count
-    geom_violin() +                                   # violin plot, show distribution
-    geom_point(alpha = 0.2) +                         # scatter plot
-    theme_bw() +
-    theme(
-      axis.text.x = element_text(angle = 90)          # Rotate treatment text
-    ) +
-    labs(x = "Treatment Groups", y = "RNA Seq Counts") +
-    facet_grid(cols = vars(group), drop = TRUE, scales = "free_x")      # Facet by hour
-)
-```
 
-```{r}
-library(DESeq2)
+mat_top_toll_imd <- as.matrix(toll_imd_top_dif)
 
-col_data_hem_both <- col_data_hem_both %>% 
-  mutate(Group = paste(Sex, Time_post_inf, sep = "_"))
+mat_top_toll_imd <- mat_top_toll_imd - rowMeans(mat_top_toll_imd)
 
-dds <- DESeqDataSetFromMatrix(matrix_count_data_hem_both,
-                              col_data_hem_both,
-                              design = ~Group)
-#> converting counts to integer mode
-#> Warning in DESeqDataSet(se, design = design, ignoreRank): some variables in
-#> design formula are characters, converting to factors
+heatmap3(mat_top_toll_imd, trace = "none", col = colors, labCol = NULL, labRow = rownames(mat_top_toll_imd), RowSideLabs = F, ColSideLabs = F, mar = c(5, 12), key.title = "Expression", cexRow = 1, scale = "row")
+# grid.echo()
+# top_toll_imd <- grid.grab()
+# 
+# png(filename = "Results/top_toll_imd.png", width = 1000, height = 1200, units = "px")
+# grid.draw(top_toll_imd)s
+# dev.off()
+toll_imd_mod <- top_dif_gsea %>% 
+  filter(gene_id %in% toll_imd_ids$FLYBASE) %>% 
+  mutate(direction = case_when(dif2hr > 0 ~ "Positive",
+                               dif2hr < 0 ~ "Negative"))
 
-dds <- DESeq(dds)
-#> estimating size factors
-#> estimating dispersions
-#> gene-wise dispersion estimates
-#> mean-dispersion relationship
-#> final dispersion estimates
-#> fitting model and testing
-vsd <- varianceStabilizingTransformation(dds)
-library(genefilter)      # <= why is this here?
-#>
-#> Attaching package: 'genefilter'
-#> The following objects are masked from 'package:matrixStats':
-#>
-#>     rowSds, rowVars
-#> The following object is masked from 'package:readr':
-#>
-#>     spec
-wpn_vsd <- getVarianceStabilizedData(dds)
-rv_wpn <- rowVars(wpn_vsd)
-summary(rv_wpn)
-#>     Min.  1st Qu.   Median     Mean  3rd Qu.     Max.
-#>  0.00000  0.00000  0.00000  0.08044  0.03322 11.14529
+gg_toll_imd <- as.data.frame(mat_top_toll_imd) %>% 
+  mutate(gene = rownames(mat_top_toll_imd)) %>% 
+  left_join(toll_imd_mod, by = "gene") %>% 
+  pivot_longer(cols = 1:27, names_to = "sample", values_to = "count") %>% 
+  separate(sample, into = c("Sex", "Time", "hem", "rep")) %>% 
+  mutate(time_hours = case_when(Time == "2h" ~ 2,
+                                Time == "4h" ~ 4,
+                                Time == "UC" ~ 0)) %>% 
+  group_by(time_hours, Sex, gene) %>% 
+  mutate(avg_count = mean(count))
 
-q75_wpn <- quantile( rowVars(wpn_vsd), .75)  # <= original
-q95_wpn <- quantile( rowVars(wpn_vsd), .95)  # <= changed to 95 quantile to reduce dataset
-expr_normalized <- wpn_vsd[ rv_wpn > q75_wpn, ]
+direction_labs <- c("Negative fold-change", "Positive fold-change")
+names(direction_labs) <- c("Negative", "Positive")
 
-expr_normalized[1:5,1:10]
-#>                       B-3      B-4      B-5      L-3      L-4      L-5      S-3
-#> AC149818.2_FG001 7.600901 7.077399 7.803434 7.220840 7.410408 8.028223 7.160846
-#> AC149829.2_FG003 8.782014 8.179876 7.900062 8.299778 7.529891 8.631731 8.055118
-#> AC182617.3_FG001 8.047244 7.120668 6.885533 7.501391 7.279413 7.809565 7.184253
-#> AC186512.3_FG001 6.901539 7.389644 6.975945 6.859593 7.370816 6.633722 7.798843
-#> AC186512.3_FG007 7.919688 7.754506 7.670946 7.417760 7.988427 7.904850 7.484542
-#>                       S-4      S-5   B_L1.1
-#> AC149818.2_FG001 7.401382 7.345322 6.524435
-#> AC149829.2_FG003 8.744502 8.142909 8.240407
-#> AC182617.3_FG001 8.140134 6.972400 7.777347
-#> AC186512.3_FG001 6.949501 6.952659 6.059033
-#> AC186512.3_FG007 8.375664 7.762799 6.335663
-dim(expr_normalized)
-#> [1] 5486   24
+sex_labs <- c("Female", "Male")
+names(sex_labs) <- c("F", "M")
 
-expr_normalized_df <- data.frame(expr_normalized) %>%
-  mutate(
-    Gene_id = row.names(expr_normalized)
-  ) %>%
-  pivot_longer(-Gene_id)
-
-expr_normalized_df %>% ggplot(., aes(x = name, y = value)) +
-  geom_violin() +
+(toll_imd_plot <- ggplot(gg_toll_imd, aes(x = time_hours, y = count, color = gene, fill = gene)) +
+  geom_smooth() +
   geom_point() +
   theme_bw() +
-  theme(
-    axis.text.x = element_text( angle = 90)
-  ) +
-  ylim(0, NA) +
-  labs(
-    title = "Normalized and 75 quantile Expression",
-    x = "treatment",
-    y = "normalized expression"
-  )
+  theme(legend.position = "none", aspect.ratio = 1) +
+  facet_grid(direction~Sex, labeller = labeller(direction = direction_labs, Sex = sex_labs)) +
+  ylab("Gene counts (normalized to zero)") +
+  xlab("Hours post injection") +
+  ggtitle("Expression of Toll and Imd pathway in hemocytes") +
+  theme(aspect.ratio = 1, strip.background = element_rect(fill = "white")))
+ggsave("results/toll_imd_plot.png", plot = toll_imd_plot, width = 5, height = 5) 
+
+
+############################################################
+# Non-stratified by sex
+toll_imd_top_dif <- fpkm_counts %>% 
+  filter(gene_id %in% toll_imd_ids$FLYBASE) %>% 
+  select(contains("hem"))
+
+
+
+toll_imd_vol <- top_time_vol %>% 
+  left_join(gene_names_fb) %>% 
+  filter(gene_id %in% toll_imd_ids$FLYBASE) 
+
+
+(toll_imd_vol_plot <- ggplot(toll_imd_vol, aes(x = `Hr_2.UC`, y = -log10(P.Value), label = gene_name)) +
+    geom_point(aes(color = color_2)) +
+    geom_text_repel(data = toll_imd_vol %>% filter(!color_2 == "NS")) +
+    scale_color_manual(values = c("#000004", "lightgrey", "#FEC98D"), name = NULL) +
+    theme_bw() +
+    xlab("Log2 Fold Change at 2 hours") +
+    ylab("-log10(P value)") +
+    ggtitle(paste("Change in Toll and Imd pathways \nafter 2 hours")) +
+    theme(aspect.ratio = 1))
+
+(toll_imd_vol_4_plot <- ggplot(toll_imd_vol, aes(x = Hr_4.Hr_2, y = -log10(P.Value), label = gene_name)) +
+    geom_point(aes(color = color_4)) +
+    geom_text_repel(data = toll_imd_vol %>% filter(!color_4 == "NS")) +
+    scale_color_manual(values = c("#000004", "lightgrey", "#F56B5C"), name = NULL) +
+    theme_bw() +
+    xlab("Log2 Fold Change at 4 hours") +
+    ylab("-log10(P value)") +
+    ggtitle(paste("Change in Toll and Imd pathways \nbetween 4 and 2 hours")) +
+    theme(aspect.ratio = 1))
+
+ggsave("results/toll_imd_vol_2.png", toll_imd_vol_plot, width = 6, height = 4)
+ggsave("results/toll_imd_vol_4.png", toll_imd_vol_4_plot, width = 6, height = 4)
+
+
+
+############################
+# Sex-specific per time
+toll_imd_vol_0 <- top_sex_0 %>% 
+  mutate(gene_name = rownames(.)) %>% 
+  left_join(gene_names_fb) %>% 
+  filter(gene_id %in% toll_imd_ids$FLYBASE) %>% 
+  mutate(colors = case_when(logFC > 1.5 & P.Value < 0.05 ~ "Male-specific",
+                            logFC < -1.5 & P.Value < 0.05 ~ "Female-specific",
+                            TRUE ~ "NS"))
+
+
+(toll_imd_vol_plot_0 <- ggplot(toll_imd_vol_0, aes(x = logFC, y = -log10(P.Value), label = gene_name)) +
+    geom_point(aes(color = colors)) +
+    geom_text_repel(data = toll_imd_vol_0 %>% filter(!colors == "NS")) +
+    scale_color_manual(values = c("#D3C164", "#05366E", "lightgrey"), name = NULL) +
+    theme_bw() +
+    xlab("Log2 Fold Change at baseline") +
+    ylab("-log10(P value)") +
+    ggtitle(paste("Sex specific expression of Toll and Imd pathways after 0 hours")) +
+    theme(aspect.ratio = 1))
+
+toll_imd_vol_2 <- top_sex_2 %>% 
+  mutate(gene_name = rownames(.)) %>% 
+  left_join(gene_names_fb) %>% 
+  filter(gene_id %in% toll_imd_ids$FLYBASE) %>% 
+  mutate(colors = case_when(logFC > 1.5 & P.Value < 0.05 ~ "Male-specific",
+                            logFC < -1.5 & P.Value < 0.05 ~ "Female-specific",
+                            TRUE ~ "NS"))
+
+
+(toll_imd_vol_plot_2 <- ggplot(toll_imd_vol_2, aes(x = logFC, y = -log10(P.Value), label = gene_name)) +
+    geom_point(aes(color = colors)) +
+    geom_text_repel(data = toll_imd_vol_2 %>% filter(!colors == "NS")) +
+    scale_color_manual(values = c("#D3C164", "#05366E", "lightgrey"), name = NULL) +
+    theme_bw() +
+    xlab("Log2 Fold Change at 2 hours") +
+    ylab("-log10(P value)") +
+    ggtitle(paste("Sex specific expression of Toll and Imd pathways after 2 hours")) +
+    theme(aspect.ratio = 1))
+
+toll_imd_vol_4 <- top_sex_4 %>% 
+  mutate(gene_name = rownames(.)) %>% 
+  left_join(gene_names_fb) %>% 
+  filter(gene_id %in% toll_imd_ids$FLYBASE) %>% 
+  mutate(colors = case_when(logFC > 1.5 & P.Value < 0.05 ~ "Male-specific",
+                            logFC < -1.5 & P.Value < 0.05 ~ "Female-specific",
+                            TRUE ~ "NS"))
+
+
+(toll_imd_vol_plot_4 <- ggplot(toll_imd_vol_4, aes(x = logFC, y = -log10(P.Value), label = gene_name)) +
+    geom_point(aes(color = colors)) +
+    geom_text_repel(data = toll_imd_vol_4 %>% filter(!colors == "NS")) +
+    scale_color_manual(values = c("#D3C164", "#05366E", "lightgrey"), name = NULL) +
+    theme_bw() +
+    xlab("Log2 Fold Change at 4 hours") +
+    ylab("-log10(P value)") +
+    ggtitle(paste("Sex specific expression of Toll and Imd pathways after 4 hours")) +
+    theme(aspect.ratio = 1))
+
+ggsave("results/toll_imd_vol_plot_0.png", toll_imd_vol_plot_0, width = 6, height = 4)
+ggsave("results/toll_imd_vol_plot_2.png", toll_imd_vol_plot_2, width = 6, height = 4)
+ggsave("results/toll_imd_vol_plot_4.png", toll_imd_vol_plot_4, width = 6, height = 4)
+
 ```
 
-
+##### Endocytosis
 ```{r}
-input_mat = t(expr_normalized)
+endocytosis_ids<-bitr(endocytosis, fromType = "ENTREZID", toType = "FLYBASE", OrgDb=organism)
+endocytosis_top_dif <- fpkm_counts %>% 
+  filter(gene_id %in% endocytosis_ids$FLYBASE) %>% 
+  select(contains("hem"))
 
-input_mat[1:5,1:10]           # Look at first 5 rows and 10 columns
-
-#library(WGCNA)
-allowWGCNAThreads()          # allow multi-threading (optional)
-#> Allowing multi-threading with up to 4 threads.
-
-# Choose a set of soft-thresholding powers
-powers = c(c(1:10), seq(from = 12, to = 20, by = 2))
-
-# Call the network topology analysis function
-sft = pickSoftThreshold(
-  input_mat,             # <= Input data
-  #blockSize = 30,
-  powerVector = powers,
-  verbose = 5
-  )
-
-par(mfrow = c(1,2));
-cex1 = 0.9;
-
-plot(sft$fitIndices[, 1],
-     -sign(sft$fitIndices[, 3]) * sft$fitIndices[, 2],
-     xlab = "Soft Threshold (power)",
-     ylab = "Scale Free Topology Model Fit, signed R^2",
-     main = paste("Scale independence")
-)
-text(sft$fitIndices[, 1],
-     -sign(sft$fitIndices[, 3]) * sft$fitIndices[, 2],
-     labels = powers, cex = cex1, col = "red"
-)
-abline(h = 0.90, col = "red")
-plot(sft$fitIndices[, 1],
-     sft$fitIndices[, 5],
-     xlab = "Soft Threshold (power)",
-     ylab = "Mean Connectivity",
-     type = "n",
-     main = paste("Mean connectivity")
-)
-text(sft$fitIndices[, 1],
-     sft$fitIndices[, 5],
-     labels = powers,
-     cex = cex1, col = "red")
-```
+library(heatmap3)
+library(viridis)
+library(gridGraphics)
+colors <- colorRampPalette( viridis(9) )(28236)
 
 
-```{r}
-picked_power = 16
-temp_cor <- cor       
-cor <- WGCNA::cor         # Force it to use WGCNA cor function (fix a namespace conflict issue)
-netwk <- blockwiseModules(input_mat,                # <= input here
+mat_endocytosis_top_dif <- as.matrix(endocytosis_top_dif)
 
-                          # == Adjacency Function ==
-                          power = picked_power,                # <= power here
-                          networkType = "signed",
+mat_endocytosis_top_dif <- mat_endocytosis_top_dif - rowMeans(mat_endocytosis_top_dif)
 
-                          # == Tree and Block Options ==
-                          deepSplit = 2,
-                          pamRespectsDendro = F,
-                          # detectCutHeight = 0.75,
-                          minModuleSize = 30,
-                          maxBlockSize = 4000,
-
-                          # == Module Adjustments ==
-                          reassignThreshold = 0,
-                          mergeCutHeight = 0.25,
-
-                          # == TOM == Archive the run results in TOM file (saves time)
-                          saveTOMs = T,
-                          saveTOMFileBase = "ER",
-
-                          # == Output Options
-                          numericLabels = T,
-                          verbose = 3)
-
-cor <- temp_cor     # Return cor function to original namespace
-```
+# heatmap3(mat_endocytosis_top_dif, trace = "none", col = colors, labCol = NULL, labRow = rownames(mat_endocytosis_top_dif), RowSideLabs = F, ColSideLabs = F, mar = c(5, 12), key.title = "Expression", cexRow = 1, scale = "row")
+# grid.echo()
+# top_endocytosis <- grid.grab()
+# 
+# png(filename = "Results/heatmap_endocytosis.png", width = 1000, height = 1200, units = "px")
+# grid.draw(top_endocytosis)
+# dev.off()
 
 
-```{r}
-# Convert labels to colors for plotting
-mergedColors = labels2colors(netwk$colors)
-# Plot the dendrogram and the module colors underneath
-plotDendroAndColors(
-  netwk$dendrograms[[1]],
-  mergedColors[netwk$blockGenes[[1]]],
-  "Module colors",
-  dendroLabels = FALSE,
-  hang = 0.03,
-  addGuide = TRUE,
-  guideHang = 0.05 )
-```
+endocytosis_mod <- top_dif_gsea %>% 
+  filter(gene_id %in% endocytosis_ids$FLYBASE) %>% 
+  mutate(direction = case_when(dif2hr > 0 ~ "Positive",
+                               dif2hr < 0 ~ "Negative"))
 
-```{r}
-module_df <- data.frame(
-  gene_id = names(netwk$colors),
-  colors = labels2colors(netwk$colors)
-)
+gg_endocytosis <- as.data.frame(mat_endocytosis_top_dif) %>% 
+  mutate(gene = rownames(mat_endocytosis_top_dif)) %>% 
+  left_join(endocytosis_mod, by = "gene") %>% 
+  pivot_longer(cols = 1:27, names_to = "sample", values_to = "count") %>% 
+  separate(sample, into = c("Sex", "Time", "hem", "rep")) %>% 
+  mutate(time_hours = case_when(Time == "2h" ~ 2,
+                                Time == "4h" ~ 4,
+                                Time == "UC" ~ 0)) %>% 
+  group_by(time_hours, Sex, gene) %>% 
+  mutate(avg_count = mean(count))
 
-module_df[1:5,]
-#>            gene_id    colors
-#> 1 AC149818.2_FG001      blue
-#> 2 AC149829.2_FG003      blue
-#> 3 AC182617.3_FG001      blue
-#> 4 AC186512.3_FG001 turquoise
-#> 5 AC186512.3_FG007 turquoise
+direction_labs <- c("Negative fold-change", "Positive fold-change")
+names(direction_labs) <- c("Negative", "Positive")
 
-# write_delim(module_df,
-#            file = "Results/gene_modules.txt",
-#            delim = "\t")
-```
+sex_labs <- c("Female", "Male")
+names(sex_labs) <- c("F", "M")
 
-
-```{r}
-# Get Module Eigengenes per cluster
-MEs0 <- moduleEigengenes(input_mat, mergedColors)$eigengenes
-
-# Reorder modules so similar modules are next to each other
-MEs0 <- orderMEs(MEs0)
-module_order = names(MEs0) %>% gsub("ME","", .)
-
-# Add treatment names
-MEs0$treatment = row.names(MEs0)
-
-# tidy & plot data
-mME = MEs0 %>%
-  pivot_longer(-treatment) %>%
-  mutate(
-    name = gsub("ME", "", name),
-    name = factor(name, levels = module_order)
-  )
-
-mME %>% ggplot(., aes(x=treatment, y=name, fill=value)) +
-  geom_tile() +
+(endocytosis_plot <- ggplot(gg_endocytosis, aes(x = time_hours, y = count, color = gene, fill = gene)) +
+  geom_smooth() +
+  geom_point() +
   theme_bw() +
-  scale_fill_gradient2(
-    low = "blue",
-    high = "red",
-    mid = "white",
-    midpoint = 0,
-    limit = c(-1,1)) +
-  theme(axis.text.x = element_text(angle=90)) +
-  labs(title = "Module-trait Relationships", y = "Modules", fill="corr")
+  theme(legend.position = "none", aspect.ratio = 1) +
+  facet_grid(direction~Sex, labeller = labeller(direction = direction_labs, Sex = sex_labs)) +
+  ylab("Gene counts (normalized to zero)") +
+  xlab("Hours post injection") +
+  ggtitle("Expression of endocytosis pathway in hemocytes") +
+  theme(aspect.ratio = 1, strip.background = element_rect(fill = "white")))
+#ggsave("results/endocytosis_plot.png", plot = endocytosis_plot, width = 5, height = 5) 
+
+
+############################################################
+# Non-stratified by sex
+
+
+endo_vol <- top_time_vol %>% 
+  left_join(gene_names_fb) %>% 
+  filter(gene_id %in% endocytosis_ids$FLYBASE) 
+
+
+(endo_vol_plot <- ggplot(endo_vol, aes(x = `Hr_2.UC`, y = -log10(P.Value), label = gene_name)) +
+    geom_point(aes(color = color_2)) +
+    geom_text_repel(data = endo_vol %>% filter(!color_2 == "NS")) +
+    scale_color_manual(values = c("#000004", "lightgrey", "#FEC98D"), name = NULL) +
+    theme_bw() +
+    xlab("Log2 Fold Change at 2 hours") +
+    ylab("-log10(P value)") +
+    ggtitle(paste("Change in endocytosis pathways after 2 hours")) +
+    theme(aspect.ratio = 1))
+
+(endo_vol_4_plot <- ggplot(endo_vol, aes(x = Hr_4.Hr_2, y = -log10(P.Value), label = gene_name)) +
+    geom_point(aes(color = color_4)) +
+    geom_text_repel(data = endo_vol %>% filter(!color_4 == "NS")) +
+    scale_color_manual(values = c("#000004", "lightgrey", "#F56B5C"), name = NULL) +
+    theme_bw() +
+    xlab("Log2 Fold Change at 4 hours") +
+    ylab("-log10(P value)") +
+    ggtitle(paste("Change in endocytosis pathways between 4 and 2 hours")) +
+    theme(aspect.ratio = 1))
+
+# ggsave("Results/endocytosis_vol_2.png", endo_vol_plot, width = 8, height = 6)
+# ggsave("Results/endocytosis_vol_4.png", endo_vol_4_plot, width = 8, height = 6)
 
 ```
 
-
+##### Phagosome
 ```{r}
-# pick out a few modules of interest here
-modules_of_interest = c("turquoise", "brown", "blue", "yellow", "green", "red")
+phagosome_ids<-bitr(phagosome, fromType = "ENTREZID", toType = "FLYBASE", OrgDb=organism)
+phagosome_top_dif <- fpkm_counts %>% 
+  filter(gene_id %in% phagosome_ids$FLYBASE) %>% 
+  select(contains("hem")) %>% 
+  filter(!rowMeans(.) == 0)
 
-# Pull out list of genes in that module
-submod = module_df %>%
-  subset(colors %in% modules_of_interest)
+library(heatmap3)
+library(viridis)
+library(gridGraphics)
+colors <- colorRampPalette( viridis(9) )(28236)
 
-row.names(module_df) = module_df$gene_id
 
-# Get normalized expression for those genes
-expr_normalized[1:5,1:10]
+mat_phagosome_top_dif <- as.matrix(phagosome_top_dif)
 
-subexpr = expr_normalized[submod$gene_id,]
+mat_phagosome_top_dif <- mat_phagosome_top_dif - rowMeans(mat_phagosome_top_dif)
 
-submod_df = data.frame(subexpr) %>%
-  mutate(
-    gene_id = row.names(.)
-  ) %>%
-  pivot_longer(-gene_id) %>%
-  mutate(
-    module = module_df[gene_id,]$colors
-  )
+# heatmap3(mat_phagosome_top_dif, trace = "none", col = colors, labCol = NULL, labRow = rownames(mat_phagosome_top_dif), RowSideLabs = F, ColSideLabs = F, mar = c(5, 12), key.title = "Expression", cexRow = 1, scale = "row")
+# grid.echo()
+# top_phagosome <- grid.grab()
+# 
+# png(filename = "Results/heatmap_phagosome.png", width = 1000, height = 1200, units = "px")
+# grid.draw(top_phagosome)
+# dev.off()
 
-submod_df %>% ggplot(., aes(x=name, y=value, group=gene_id)) +
-  geom_line(aes(color = module),
-            alpha = 0.2) +
+
+phagosome_mod <- top_dif_gsea %>% 
+  filter(gene_id %in% phagosome_ids$FLYBASE) %>% 
+  mutate(direction = case_when(dif2hr > 0 ~ "Positive",
+                               dif2hr < 0 ~ "Negative"))
+
+gg_phagosome <- as.data.frame(mat_phagosome_top_dif) %>% 
+  mutate(gene = rownames(mat_phagosome_top_dif)) %>% 
+  left_join(phagosome_mod, by = "gene") %>% 
+  pivot_longer(cols = 1:27, names_to = "sample", values_to = "count") %>% 
+  separate(sample, into = c("Sex", "Time", "hem", "rep")) %>% 
+  mutate(time_hours = case_when(Time == "2h" ~ 2,
+                                Time == "4h" ~ 4,
+                                Time == "UC" ~ 0)) %>% 
+  group_by(time_hours, Sex, gene) %>% 
+  mutate(avg_count = mean(count))
+
+direction_labs <- c("Negative fold-change", "Positive fold-change")
+names(direction_labs) <- c("Negative", "Positive")
+
+sex_labs <- c("Female", "Male")
+names(sex_labs) <- c("F", "M")
+
+(phagosome_plot <- ggplot(gg_phagosome, aes(x = time_hours, y = count, color = gene, fill = gene)) +
+  geom_smooth() +
+  geom_point() +
   theme_bw() +
-  theme(
-    axis.text.x = element_text(angle = 90)
-  ) +
-  facet_grid(rows = vars(module)) +
-  labs(x = "treatment",
-       y = "normalized expression")
+  theme(legend.position = "none", aspect.ratio = 1) +
+  facet_grid(direction~Sex, labeller = labeller(direction = direction_labs, Sex = sex_labs)) +
+  ylab("Gene counts (normalized to zero)") +
+  xlab("Hours post injection") +
+  ggtitle("Expression of phagosome pathway in hemocytes") +
+  theme(aspect.ratio = 1, strip.background = element_rect(fill = "white")))
+#ggsave("Results/phagosome_plot.png", plot = phagosome_plot, width = 5, height = 5) 
 ```
 
+###### Differences in pathway at 0
 ```{r}
-genes_of_interest = module_df %>%
-  subset(colors %in% modules_of_interest)
+colors_vol <- c(colors_sex, "darkgrey")
+top_sex_0_vol <- top_sex_0 %>% 
+  mutate(gene_name = rownames(top_sex_0)) %>% 
+  left_join(gene_names_fb) %>% 
+  rename(FLYBASE = gene_id) %>% 
+  filter(FLYBASE %in% phagosome_ids$FLYBASE | FLYBASE %in% endocytosis_ids$FLYBASE) %>% 
+  mutate(Sex_bias = case_when(logFC > 2.5 & P.Value < 0.5 ~ "Male biased",
+                              logFC < -2.5 & P.Value < 0.5 ~ "Female biased",
+                              TRUE ~ "NS"))
 
-expr_of_interest = expr_normalized[genes_of_interest$gene_id,]
-expr_of_interest[1:5,1:5]
+(endo_phagosome_vol_0 <- ggplot(top_sex_0_vol, aes(x = logFC, y = -log10(P.Value))) +
+  geom_point(aes(color = Sex_bias)) +
+  geom_text_repel(data = (top_sex_0_vol %>% filter(Sex_bias == "Female biased" | Sex_bias == "Male biased")), aes(label = gene_name)) + 
+  scale_color_manual(values = colors_vol, name ="") +
+  theme_bw() +
+  theme(aspect.ratio = 1) +
+  ggtitle("Dimorphically expressed endocytosis or phagosome \nassociated genes before challenge") +
+  xlab("Log2 fold change") +
+  ylab("-log10 p-value"))
 
-
-# Only recalculate TOM for modules of interest (faster, altho there's some online discussion if this will be slightly off)
-TOM = TOMsimilarityFromExpr(t(expr_of_interest),
-                            power = picked_power)
-#> TOM calculation: adjacency..
-#> ..will use 4 parallel threads.
-#>  Fraction of slow calculations: 0.000000
-#> ..connectivity..
-#> ..matrix multiplication (system BLAS)..
-#> ..normalization..
-#> ..done.
-
-# Add gene names to row and columns
-row.names(TOM) = row.names(expr_of_interest)
-colnames(TOM) = row.names(expr_of_interest)
-
-edge_list = data.frame(TOM) %>%
-  mutate(
-    gene1 = row.names(.)
-  ) %>%
-  pivot_longer(-gene1) %>%
-  dplyr::rename(gene2 = name, correlation = value) %>%
-  unique() %>%
-  subset(!(gene1==gene2)) %>%
-  mutate(
-    module1 = module_df[gene1,]$colors,
-    module2 = module_df[gene2,]$colors
-  )
-
-head(edge_list)
-
-write_delim(edge_list,
-             file = "Results/edgelist.csv",
-             delim = ",")
+ggsave("results/endo_phagosome_vol_0.png", plot = endo_phagosome_vol_0, width = 6, height = 4) 
 ```
 
 
@@ -1652,9 +907,9 @@ library(WGCNA)
 ```
 
 ```{r}
-col_sel <- names(count_data_hem_both)
+col_sel <- names(dat_fpkm_hem)
 
-my_data <- count_data_hem_both %>% 
+my_data <- dat_fpkm_hem %>% 
   tidyr::pivot_longer(
     .,
     col = all_of(col_sel)
@@ -1662,26 +917,32 @@ my_data <- count_data_hem_both %>%
   mutate(group = gsub("_hem_.", "", name))
 
 # ==== Plot groups (Sample Groups vs RNA Seq Counts) to identify outliers
-(
- p <- my_data %>%
-    ggplot(., aes(x = name, y = value)) +             # x = treatment, y = RNA Seq count
-    geom_violin() +                                   # violin plot, show distribution
-    geom_point(alpha = 0.2) +                         # scatter plot
-    theme_bw() +
-    theme(
-      axis.text.x = element_text(angle = 90)          # Rotate treatment text
-    ) +
-    labs(x = "Treatment Groups", y = "RNA Seq Counts") +
-    facet_grid(cols = vars(group), drop = TRUE, scales = "free_x")      # Facet by hour
-)
+# (
+#  p <- my_data %>%
+#     ggplot(., aes(x = name, y = value)) +             # x = treatment, y = RNA Seq count
+#     geom_violin() +                                   # violin plot, show distribution
+#     geom_point(alpha = 0.2) +                         # scatter plot
+#     theme_bw() +
+#     theme(
+#       axis.text.x = element_text(angle = 90)          # Rotate treatment text
+#     ) +
+#     labs(x = "Treatment Groups", y = "RNA Seq Counts") +
+#     facet_grid(cols = vars(group), drop = TRUE, scales = "free_x")      # Facet by hour
+# )
 ```
 
 ```{r}
 library(DESeq2)
 
-col_data_hem_both <- col_data_hem_both %>% 
+
+col_data_hem_both <- col_data %>% 
+  filter(Stage == "adult" & Tissue == "hemocyte") %>% 
   mutate(Time_post_inf = factor(Time_post_inf, levels = c("UC", "2_hr", "4_hr")),
          Group = factor(paste(Sex, Time_post_inf, sep = "_"), levels = c("Female_UC", "Male_UC", "Female_2_hr", "Male_2_hr", "Female_4_hr", "Male_4_hr")))
+
+count_data_hem_both <- dat %>% 
+  dplyr::select(all_of(col_data_hem_both$ID))
+matrix_count_data_hem_both <- as.matrix(count_data_hem_both)
 
 dds <- DESeqDataSetFromMatrix(matrix_count_data_hem_both,
                               col_data_hem_both,
@@ -1733,25 +994,25 @@ expr_normalized[1:5,1:10]
 dim(expr_normalized)
 #> [1] 5486   24
 
-expr_normalized_df <- data.frame(expr_normalized) %>%
-  mutate(
-    Gene_id = row.names(expr_normalized)
-  ) %>%
-  pivot_longer(-Gene_id)
-
-expr_normalized_df %>% ggplot(., aes(x = name, y = value)) +
-  geom_violin() +
-  geom_point() +
-  theme_bw() +
-  theme(
-    axis.text.x = element_text( angle = 90)
-  ) +
-  ylim(0, NA) +
-  labs(
-    title = "Normalized and 75 quantile Expression",
-    x = "treatment",
-    y = "normalized expression"
-  )
+# expr_normalized_df <- data.frame(expr_normalized) %>%
+#   mutate(
+#     Gene_id = row.names(expr_normalized)
+#   ) %>%
+#   pivot_longer(-Gene_id)
+# 
+# expr_normalized_df %>% ggplot(., aes(x = name, y = value)) +
+#   geom_violin() +
+#   geom_point() +
+#   theme_bw() +
+#   theme(
+#     axis.text.x = element_text( angle = 90)
+#   ) +
+#   ylim(0, NA) +
+#   labs(
+#     title = "Normalized and 75 quantile Expression",
+#     x = "treatment",
+#     y = "normalized expression"
+#   )
 ```
 
 
@@ -1890,18 +1151,17 @@ mME = MEs0 %>%
     name = factor(name, levels = module_order)
   )
 
-mME %>% ggplot(., aes(x=treatment, y=name, fill=value)) +
+(module_heatmap <- mME %>% 
+  filter(name %in% c("grey","yellow")) %>% 
+  mutate(name = factor(name, levels = c("grey", "yellow")),
+         treatment = factor(treatment, levels = c("F_UC_hem_2", "F_UC_hem_3", "F_UC_hem_4", "F_UC_hem_5", "M_UC_hem_2", "M_UC_hem_3", "M_UC_hem_5", "F_2h_hem_1", "F_2h_hem_2", "F_2h_hem_3", "F_2h_hem_4", "F_2h_hem_5", "M_2h_hem_1", "M_2h_hem_2", "M_2h_hem_3", "M_2h_hem_4", "M_2h_hem_5", "F_4h_hem_1", "F_4h_hem_2", "F_4h_hem_3", "F_4h_hem_4", "F_4h_hem_5", "M_4h_hem_1", "M_4h_hem_2", "M_4h_hem_3", "M_4h_hem_4", "M_4h_hem_5"))) %>% 
+  ggplot(., aes(x=treatment, y=name, fill=value)) +
   geom_tile() +
   theme_bw() +
-  scale_fill_gradient2(
-    low = "blue",
-    high = "red",
-    mid = "white",
-    midpoint = 0,
-    limit = c(-1,1)) +
+  scale_fill_viridis() +
   theme(axis.text.x = element_text(angle=90)) +
-  labs(title = "Module-trait Relationships", y = "Modules", fill="corr")
-
+  labs(title = "Module-trait Relationships", y = "Modules", fill="corr"))
+#ggsave("results/module_heatmap.png", module_heatmap, height = 4, width = 8)
 ```
 
 
@@ -1980,31 +1240,11 @@ edge_list = data.frame(TOM) %>%
 head(edge_list)
 
 write_delim(edge_list,
-             file = "Results/edgelist.csv",
+             file = "results/edgelist.csv",
              delim = ",")
 ```
 
 #### Clusterprofiler 95
-
-```{r}
-# BiocManager::install("clusterProfiler")
-# if (!require("BiocManager", quietly = TRUE))
-#     install.packages("BiocManager")
-# 
-# BiocManager::install("pathview")
-# BiocManager::install("enrichplot")
-library(clusterProfiler)
-library(enrichplot)
-library(ggplot2)
-
-```
-
-```{r}
-organism = "org.Dm.eg.db"
-#BiocManager::install(organism, character.only = TRUE)
-library(organism, character.only = TRUE)
-```
-
 
 ```{r}
 KEGG_enrichment_95 <- vector("list")
@@ -2034,721 +1274,93 @@ KEGG_enrichment_95[[i]] <- kk
 
 ```
 
-### Heatmap 95
-```{r}
-library(viridis)
-library(heatmap3)
-library(gridGraphics)
-rldTC_hem_both <- rlog(ddsTC_hem_both)
-colors <- colorRampPalette( viridis(9) )(28236)
-colors_time <- c("#FCFDBF", "#FEC287", "#000004")
-sidecols_inf <- c("#FCFDBF", "#FEC287", "#000004")[ rldTC_hem_both$Time_post_inf ]
-sidecols_sex <- colors_sex[ rldTC_hem_both$Sex]
-sidecols <- cbind(sidecols_inf, sidecols_sex)
-leg_fill <- c(c("#FCFDBF", "#FEC287", "#000004"), colors_sex)
-text_fill <- c(c("2 hours", "4 hours", "0 hours"), text_sex)
 
-for(i in modules){
-  genes <- module_df_95 %>% 
-    filter(colors == i)
-  
-genes_of_interest <- genes$gene_id
-
-mat <- assay(rldTC_hem_both)[genes_of_interest, ]
-
-mat <- mat - rowMeans(mat)
-
-heatmap3(mat, trace = "none", col = colors, ColSideColors = sidecols, ColSideColorsSize = 2, RowSideColorsSize = 1, labCol = NULL, labRow = rownames(mat), RowSideLabs = F, ColSideLabs = F, mar = c(5, 12), key.title = "Expression", cexRow = 1, scale = "row")
-legend("topright", legend = text_fill, fill = leg_fill, border = FALSE, bty = "n", y.intersp = 0.9, cex = 0.9)
-
-grid.echo()
-heatmap <- grid.grab()
-
-png(filename = paste("Results/", i, "/95_heatmap.png", sep = ""), width = 1000, height = 1200, units = "px")
-grid.draw(heatmap)
-dev.off()
-}
-
-```
-
-
-### Heatmap
-```{r}
-library(viridis)
-library(heatmap3)
-library(gridGraphics)
-rldTC_hem_both <- rlog(ddsTC_hem_both)
-colors <- colorRampPalette( viridis(9) )(28236)
-sidecols_inf <- c("#FEC287", "#E65164", "#000004")[ rldTC_hem_both$Time_post_inf ]
-sidecols_sex <- colors_sex[ rldTC_hem_both$Sex]
-sidecols <- cbind(sidecols_inf, sidecols_sex)
-leg_fill <- c(c("#E65164", "#FEC287", "#000004"), colors_sex)
-text_fill <- c(c("2 hours", "4 hours", "0 hours"), text_sex)
-
-for(i in modules){
-  genes <- module_df %>% 
-    filter(colors == i)
-  
-genes_of_interest <- genes$gene_id
-
-mat <- assay(rldTC_hem_both)[genes_of_interest, ]
-
-mat <- mat - rowMeans(mat)
-
-heatmap3(mat, trace = "none", col = colors, ColSideColors = sidecols, ColSideColorsSize = 2, RowSideColorsSize = 1, labCol = NULL, labRow = rownames(mat), RowSideLabs = F, ColSideLabs = F, mar = c(5, 12), key.title = "Expression", cexRow = 1, scale = "row")
-legend("topright", legend = text_fill, fill = leg_fill, border = FALSE, bty = "n", y.intersp = 0.9, cex = 0.9)
-
-grid.echo()
-heatmap <- grid.grab()
-
-png(filename = paste("Results/", i, "/heatmap.png", sep = ""), width = 1000, height = 1200, units = "px")
-grid.draw(heatmap)
-dev.off()
-}
-
-```
-
-
-### GSEA both sexes
-```{r}
-module_gsea <- vector("list")
-module_gsea_KEGG <- vector("list")
-fold_changes <- c("Female_2-Female_0", "Female_4-Female_2", "Male_2-Male_0", "Male_4-Male_2")
-
-for(i in modules_of_interest){
-  genes <- module_df %>% 
-    filter(colors == i)
-
-module <- fit_both %>% 
-  filter(gene %in% genes$gene_id)
-
-module <- cbind(module, Gene_ID_Flybase[match(module$gene, Gene_ID_Flybase$Gene_name), "CG_ID"])
-colnames(module)[ncol(module)] = "CG_ID"
-
-for(j in fold_changes){
-  ranks <- module[[j]][!is.na(module[[j]])]
-  names(ranks) <- module$CG_ID[!is.na(module$j)]
-
-  fgseaRes <- fgsea(t_Drosophila_REACTOME, ranks, minSize = 15, maxSize = 500)
-
-  fgseaRes_KEGG <- fgsea(t_Drosophila_KEGG, ranks, minSize = 15, maxSize = 500)
-
-module_gsea[[i]][[j]] <- fgseaRes
-module_gsea_KEGG[[i]][[j]] <- fgseaRes_KEGG
-write.csv(fgseaRes, file = paste("Results/", i, "/", j, "fgsea.csv", sep = ""))
-write.csv(fgseaRes_KEGG, file = paste("Results/", i, "/", j, "fgsea_KEGG.csv", sep = ""))
-}
-
-# #### 4 hr
-# ranks <- module$dif4hr[!is.na(module$dif4hr)]
-# names(ranks) <- module$CG_ID[!is.na(module$dif4hr)]
-# 
-# fgseaRes <- fgsea(t_Drosophila_REACTOME, ranks, minSize = 15, maxSize = 500)
-# 
-# fgseaRes_KEGG <- fgsea(t_Drosophila_KEGG, ranks, minSize = 15, maxSize = 500)
-# 
-# module_gsea_4hr[[i]] <- fgseaRes
-# module_gsea_KEGG_4hr[[i]] <- fgseaRes_KEGG
-}
-
-
-```
-
-
-#### Clusterprofiler
-```{r}
-KEGG_enrichment <- vector("list")
-
-modules <- unique(module_df$colors)
-
-for(i in modules){
-  genes <- module_df %>% 
-    filter(colors == i)
-
-original_gene_list <- genes$colors
-names(original_gene_list) <- genes$gene_id
-
-ids<-bitr(names(original_gene_list), fromType = "SYMBOL", toType = "ENTREZID", OrgDb=organism)
- # remove duplicate IDS (here I use "ENSEMBL", but it should be whatever was selected as keyType)
-dedup_ids = ids[!duplicated(ids[c("SYMBOL")]),]
-
-gene <- dedup_ids$ENTREZID
-
-kk <- enrichKEGG(gene = gene,
-                 organism = "dme",
-                 keyType = "ncbi-geneid",
-                 pvalueCutoff = 0.05)
-
-KEGG_enrichment[[i]] <- kk
-}
-
-```
 
 ```{r}
 dotplots <- vector("list")
 
 for(i in modules){
-  kk <- KEGG_enrichment[[i]]
-  dotplot_graph <- dotplot(kk) + ggtitle(paste(i, "module KEGG enrichment"))
+  kk <- KEGG_enrichment_95[[i]]
+  dotplot_graph <- dotplot(kk) + ggtitle(paste("KEGG enrichment in", i, "module"))
   dotplots[[i]] <- dotplot_graph
   if(nrow(dotplot_graph[["data"]]) > 0){
-  ggsave(filename = paste("Results/limma/",i, ".png", sep = ""), dotplot_graph, width = 8, height = 6)}
+  ggsave(filename = paste("results/",i, ".png", sep = ""), dotplot_graph, width = 8, height = 6)}
 }
 ```
 
-### Limma volcano plots
+### Module volcano plots
 ```{r}
 volcanos_2_F <- vector("list")
 volcanos_2_M <- vector("list")
 volcanos_4_F <- vector("list")
 volcanos_4_M <- vector("list")
 
-fit_both_vol <- fit_both %>% 
-  mutate(color_2_F = case_when(`Female_2-Female_0` > 2 & P.Value < 0.05 ~ "Female upregulated at 2 hrs",
-                             `Female_2-Female_0` < -2 & P.Value < 0.05 ~ "Female downregulated at 2 hrs",
+fit_both_vol <- top_time %>% 
+  mutate(color_2 = case_when(Hr_2.UC > 2 & P.Value < 0.05 ~ "Upregulated at 2 hrs",
+                             Hr_2.UC < -2 & P.Value < 0.05 ~ "Downregulated at 2 hrs",
                            TRUE ~ "NS"),
-         color_4_F = case_when(`Female_4-Female_2` > 2 & P.Value < 0.05 ~ "Female upregulated at 4 hrs",
-                           `Female_4-Female_2` < -2 & P.Value < 0.05 ~ "Female downregulated at 4 hrs",
-                           TRUE ~ "NS"),
-         color_2_M = case_when(`Male_2-Male_0` > 2 & P.Value < 0.05 ~ "Male upregulated at 2 hrs",
-                             `Male_2-Male_0` < -2 & P.Value < 0.05 ~ "Male downregulated at 2 hrs",
-                           TRUE ~ "NS"),
-         color_4_M = case_when(`Male_4-Male_2` > 2 & P.Value < 0.05 ~ "Male upregulated at 4 hrs",
-                           `Male_4-Male_2` < -2 & P.Value < 0.05 ~ "Male downregulated at 4 hrs",
+         color_4 = case_when(`Hr_4.Hr_2` > 2 & P.Value < 0.05 ~ "Upregulated at 4 hrs",
+                           `Hr_4.Hr_2` < -2 & P.Value < 0.05 ~ "Downregulated at 4 hrs",
                            TRUE ~ "NS"))
 
-  
-for(i in modules){
-  genes <- module_df %>% 
-    filter(colors == i)
+  yellow_genes <- module_df_95 %>% 
+    filter(colors == "yellow")
   
   vol_dt <- fit_both_vol %>% 
-    filter(gene %in% genes$gene_id)
+    filter(gene %in% yellow_genes$gene_id)
   
-  volcano_2_f <- ggplot(vol_dt, aes(x = `Female_2-Female_0`, y = -log10(P.Value), label = gene)) +
-    geom_point(aes(color = color_2_F)) +
-    geom_text_repel(data = vol_dt %>% filter(!color_2_F == "NS")) +
-    scale_color_manual(values = c("#000004", "lightgrey", "#FEC98D"), name = NULL) +
+  (yellow_volcano_2 <- ggplot(vol_dt, aes(x = Hr_2.UC, y = -log10(P.Value), label = gene)) +
+    geom_point(aes(color = color_2)) +
+    geom_text_repel(data = vol_dt %>% filter(!color_2 == "NS")) +
+    scale_color_manual(values = c("lightgrey", "#FEC98D"), name = NULL) +
     theme_bw() +
-    xlab("Log2 Fold Change at 2 hours in females") +
+    theme(aspect.ratio = 1) +
+    xlab("Log2 Fold Change at 2 hours") +
     ylab("-log10(P value)") +
-    ggtitle(paste("Genes from ", i, " module"))
+    ggtitle(paste("Genes from yellow module")))
+#ggsave("results/yellow_vol.png", yellow_volcano_2, height = 4, width = 5)  
   
-  volcano_4_f <- ggplot(vol_dt, aes(x = `Female_4-Female_2`, y = -log10(P.Value), label = gene)) +
-    geom_point(aes(color = color_4_F)) +
-    geom_text_repel(data = vol_dt %>% filter(!color_4_F == "NS")) +
-    scale_color_manual(values = c("#000004", "lightgrey", "#FEC98D"), name = NULL) +
+  (yellow_volcano_4 <- ggplot(vol_dt, aes(x = Hr_4.Hr_2, y = -log10(P.Value), label = gene)) +
+    geom_point(aes(color = color_4)) +
+    geom_text_repel(data = vol_dt %>% filter(!color_4 == "NS")) +
+    scale_color_manual(values = c("#000004", "lightgrey", "#E65164"), name = NULL) +
     theme_bw() +
-    xlab("Log2 Fold Change at 4 hours in females") +
+    theme(aspect.ratio = 1) +
+    xlab("Log2 Fold Change at 4 hours") +
     ylab("-log10(P value)") +
-    ggtitle(paste("Genes from ", i, " module"))
+    ggtitle(paste("Genes from yellow module")))
+#ggsave("results/yellow_vol_4.png", yellow_volcano_4, height = 4, width = 5)  
   
-  volcano_2_m <- ggplot(vol_dt, aes(x = `Male_2-Male_0`, y = -log10(P.Value), label = gene)) +
-    geom_point(aes(color = color_2_M)) +
-    geom_text_repel(data = vol_dt %>% filter(!color_2_M == "NS")) +
-    scale_color_manual(values = c("#000004", "lightgrey", "#FEC98D"), name = NULL) +
+    grey_genes <- module_df_95 %>% 
+    filter(colors == "grey")
+  
+  vol_dt <- fit_both_vol %>% 
+    filter(gene %in% grey_genes$gene_id)
+  
+  (grey_volcano_2 <- ggplot(vol_dt, aes(x = Hr_2.UC, y = -log10(P.Value), label = gene)) +
+    geom_point(aes(color = color_2)) +
+    geom_text_repel(data = vol_dt %>% filter(!color_2 == "NS")) +
+    scale_color_manual(values = c("#000004", "lightgrey"), name = NULL) +
     theme_bw() +
-    xlab("Log2 Fold Change at 2 hours in males") +
+    theme(aspect.ratio = 1) +
+    xlab("Log2 Fold Change at 2 hours") +
     ylab("-log10(P value)") +
-    ggtitle(paste("Genes from ", i, " module"))
+    ggtitle(paste("Genes from grey module")))
+#ggsave("results/grey_vol.png", grey_volcano_2, height = 4, width = 5)  
   
-  volcano_4_m <- ggplot(vol_dt, aes(x = `Male_4-Male_2`, y = -log10(P.Value), label = gene)) +
-    geom_point(aes(color = color_4_M)) +
-    geom_text_repel(data = vol_dt %>% filter(!color_4_M == "NS")) +
-    scale_color_manual(values = c("#000004", "lightgrey", "#FEC98D"), name = NULL) +
+  (grey_volcano_4 <- ggplot(vol_dt, aes(x = Hr_4.Hr_2, y = -log10(P.Value), label = gene)) +
+    geom_point(aes(color = color_4)) +
+    geom_text_repel(data = vol_dt %>% filter(!color_4 == "NS")) +
+    scale_color_manual(values = c("#000004", "lightgrey", "#E65164"), name = NULL) +
     theme_bw() +
-    xlab("Log2 Fold Change at 4 hours in males") +
+    theme(aspect.ratio = 1) +
+    xlab("Log2 Fold Change at 4 hours") +
     ylab("-log10(P value)") +
-    ggtitle(paste("Genes from ", i, " module"))
-  
-  volcanos_2_F[[i]] <- volcano_2_f
-  ggsave(volcano_2_f, filename = paste("Results/", i, "_2hr_female_volc.png", sep = ""))
-  volcanos_4_F[[i]] <- volcano_4_f
-  ggsave(volcano_4_f, filename = paste("Results/", i, "_4hr_female_volc.png", sep = ""))
-  volcanos_2_M[[i]] <- volcano_2_m
-  ggsave(volcano_2_m, filename = paste("Results/", i, "_2hr_male_volc.png", sep = ""))
-  volcanos_4_M[[i]] <- volcano_4_m
-  ggsave(volcano_4_m, filename = paste("Results/", i, "_4hr_male_volc.png", sep = ""))
-}
-
-(Male_volcano_2 <- top_Male_vol %>% 
- # filter(dif2hr > -2710) %>% 
- # filter(dif2hr < 1184) %>% 
-  ggplot(aes(x = `Male_2.Male_0`, y = -log10(P.Value), label = gene)) +
-  geom_point(aes(color = color_4)) +
-  geom_text_repel(data = top_Male_vol %>% filter(!color_4 == "NS"), aes(label = gene)) +
-  scale_color_manual(values = c("#000004", "lightgrey", "#FEC98D"), name = NULL) +
-  theme_bw() +
-  xlab("Log2 Fold Change at 2 hours") +
-  ylab("-log10(P value)") +
-  ggtitle("Genes differentially expressed in male hemocytes 2 hours after S. aureus injection"))
-
-(Male_volcano_4 <- top_Male_vol %>% 
- # filter(dif2hr > -2710) %>% 
- # filter(dif2hr < 1184) %>% 
-  ggplot(aes(x = `Male_4.Male_2`, y = -log10(P.Value), label = gene)) +
-  geom_point(aes(color = color_2)) +
-  geom_text_repel(data = top_Male_vol %>% filter(!color_2 == "NS"), aes(label = gene)) +
-  scale_color_manual(values = c("#000004", "lightgrey", "#FEC98D"), name = NULL) +
-  theme_bw() +
-  xlab("Log2 Fold Change at 4 hours") +
-  ylab("-log10(P value)") +
-  ggtitle("Genes differentially expressed in male hemocytes 4 hours after S. aureus injection"))
-  
-#ggsave("Results/limma/Male_volcano_2hr.png", Male_volcano_2, width = 8, height = 6)  
-#ggsave("Results/limma/Male_volcano_4hr.png", Male_volcano_4, width = 8, height = 6)
-
-
-
+    ggtitle(paste("Genes from grey module")))
+#ggsave("results/grey_vol_4.png", grey_volcano_4, height = 4, width = 5)  
 ```
 
 
-
-
-### GSEA males
-```{r}
-module_gsea_M_2hr <- vector("list")
-module_gsea_M_4hr <- vector("list")
-module_gsea_M_KEGG_2hr <- vector("list")
-module_gsea_M_KEGG_4hr <- vector("list")
-
-for(i in modules_of_interest){
-  genes <- module_df %>% 
-    filter(colors == i)
-
-module <- top_male %>% 
-  filter(gene %in% genes$gene_id)
-
-module <- cbind(module, Gene_ID_Flybase[match(module$gene, Gene_ID_Flybase$Gene_name), "CG_ID"])
-colnames(module)[ncol(module)] = "CG_ID"
-
-ranks <- module$`Male_2.Male_0`[!is.na(module$`Male_2.Male_0`)]
-names(ranks) <- module$CG_ID[!is.na(module$`Male_2.Male_0`)]
-
-fgseaRes <- fgsea(t_Drosophila_REACTOME, ranks, minSize = 15, maxSize = 500)
-
-fgseaRes_KEGG <- fgsea(t_Drosophila_KEGG, ranks, minSize = 15, maxSize = 500)
-
-module_gsea_M_2hr[[i]] <- fgseaRes
-module_gsea_M_KEGG_2hr[[i]] <- fgseaRes_KEGG
-
-#### 4 hr
-ranks <- module$`Male_4.Male_2`[!is.na(module$`Male_4.Male_2`)]
-names(ranks) <- module$CG_ID[!is.na(module$`Male_4.Male_2`)]
-
-fgseaRes <- fgsea(t_Drosophila_REACTOME, ranks, minSize = 15, maxSize = 500)
-
-fgseaRes_KEGG <- fgsea(t_Drosophila_KEGG, ranks, minSize = 15, maxSize = 500)
-
-module_gsea_M_4hr[[i]] <- fgseaRes
-module_gsea_M_KEGG_4hr[[i]] <- fgseaRes_KEGG
-}
-
-
-```
-
-
-### GSEA females
-```{r}
-module_gsea_F_2hr <- vector("list")
-module_gsea_F_4hr <- vector("list")
-module_gsea_F_KEGG_2hr <- vector("list")
-module_gsea_F_KEGG_4hr <- vector("list")
-
-for(i in modules_of_interest){
-  genes <- module_df %>% 
-    filter(colors == i)
-
-module <- top_female %>% 
-  filter(gene %in% genes$gene_id)
-
-module <- cbind(module, Gene_ID_Flybase[match(module$gene, Gene_ID_Flybase$Gene_name), "CG_ID"])
-colnames(module)[ncol(module)] = "CG_ID"
-
-ranks <- module$`Female_2.Female_0`[!is.na(module$`Female_2.Female_0`)]
-names(ranks) <- module$CG_ID[!is.na(module$`Female_2.Female_0`)]
-
-fgseaRes <- fgsea(t_Drosophila_REACTOME, ranks, minSize = 15, maxSize = 500)
-
-fgseaRes_KEGG <- fgsea(t_Drosophila_KEGG, ranks, minSize = 15, maxSize = 500)
-
-module_gsea_F_2hr[[i]] <- fgseaRes
-module_gsea_F_KEGG_2hr[[i]] <- fgseaRes_KEGG
-
-#### 4 hr
-ranks <- module$`Female_4.Female_2`[!is.na(module$`Female_4.Female_2`)]
-names(ranks) <- module$CG_ID[!is.na(module$`Female_4.Female_2`)]
-
-fgseaRes <- fgsea(t_Drosophila_REACTOME, ranks, minSize = 15, maxSize = 500)
-
-fgseaRes_KEGG <- fgsea(t_Drosophila_KEGG, ranks, minSize = 15, maxSize = 500)
-
-module_gsea_F_4hr[[i]] <- fgseaRes
-module_gsea_F_KEGG_4hr[[i]] <- fgseaRes_KEGG
-}
-
-
-```
-
-
-
-```{r}
-uc_male_genes <- c("Sirup", "Wwox", "Bacc", "CG8112", "CG1578", "GstT3", "CG12262", "elm", "Efr", "Chrac-16", "CR45134", "CG34348", "Spn", "CG33090", "SLC5A11", "whd", "CG9396", "Cyp6d5", "Ugt86Dd", "Mgstl", "Cyp4d8", "Sesn", "Aldh", "CG12512", "pdgy", "Cyp6a22", "CG17928", "Cyp6w1", "CG5973", "prtp", "CG1640", "CR45192", "CG1208", "CG10863", "att-ORFA", "lme4", "Lpin", "CG8249", "Obp83cd", "CG42368", "OBp83ef", "ScpX", "Got1", "sky", "CG30379", "GLaz", "AOX3", "Aldh-III", "CG33120", "Jheh2", "Cyp6a17", "Cyp6a23", "CG31710", "CG30345", "CG8051", "Gk", "scyl", "CG1732", "CG13937", "CG18135", "l(3)72Dr", "CG3301", "cry", "Bsg", "CR44170", "Cyp6a15Psi", "Gr22f", "CR46065", "TM4SF", "CG31689", "Gal", "CG5009", "Obp83g", "CG1998")
-
-gg_top_dif <- dat_fpkm_hem
-colnames(gg_top_dif) <- data_colnames
-gg_top_dif <- gg_top_dif %>% 
-  mutate(gene = rownames(gg_top_dif)) %>% 
-  filter(gene %in% uc_male_genes) %>% 
-  pivot_longer(cols = 1:27, names_to = "sample", values_to = "count") %>% 
-  separate(sample, into = c("Sex", "Time", "hem", "rep")) %>% 
-  mutate(time_hours = case_when(Time == "2h" ~ 2,
-                                Time == "4h" ~ 4,
-                                Time == "UC" ~ 0)) %>% 
-  group_by(Sex, time_hours, gene) %>% 
-  mutate(avg_count = mean(count))
-
-(un_male_plot <- ggplot(gg_top_dif, aes(x = time_hours, y = count, color = gene, fill = gene)) +
-  geom_point() +
-  geom_line(aes(y = avg_count)) +
-  facet_grid(~Sex)+
-  theme_bw() +
-  theme(legend.position = "none", aspect.ratio = 1)  +
-  ggtitle("Expression of genes that are most highly expressed in unchallenged males"))
-#ggsave("Results/limma/un_male_plot.png", un_male_plot)
-```
-
-```{r}
-male_2h_genes <- c("Pino", "RhoU", "CG7115", "CG13004", "CR45280", "vari", "dl", "Glut4EF", "CR43416", "Rab9")
-
-gg_top_dif <- dat_fpkm_hem
-colnames(gg_top_dif) <- data_colnames
-gg_top_dif <- gg_top_dif %>% 
-  mutate(gene = rownames(gg_top_dif)) %>% 
-  filter(gene %in% male_2h_genes) %>% 
-  pivot_longer(cols = 1:27, names_to = "sample", values_to = "count") %>% 
-  separate(sample, into = c("Sex", "Time", "hem", "rep")) %>% 
-  mutate(time_hours = case_when(Time == "2h" ~ 2,
-                                Time == "4h" ~ 4,
-                                Time == "UC" ~ 0)) %>% 
-  group_by(Sex, time_hours, gene) %>% 
-  mutate(avg_count = mean(count))
-
-ggplot(gg_top_dif, aes(x = time_hours, y = count, color = gene, fill = gene)) +
-  geom_smooth() +
-  geom_point() +
-  facet_grid(~Sex)+
-  theme_bw() +
-  theme(aspect.ratio = 1)  +
-  ggtitle("Expression of genes that are most highly expressed in males 2 hrs post injection")
-```
-
-```{r}
-male_4h_genes <- c("Eip71CD", "CG33462", "CG13795", "Diedel", "CG31792", "CG8326")
-
-gg_top_dif <- dat_fpkm_hem
-colnames(gg_top_dif) <- data_colnames
-gg_top_dif <- gg_top_dif %>% 
-  mutate(gene = rownames(gg_top_dif)) %>% 
-  filter(gene %in% male_4h_genes) %>% 
-  pivot_longer(cols = 1:27, names_to = "sample", values_to = "count") %>% 
-  separate(sample, into = c("Sex", "Time", "hem", "rep")) %>% 
-  mutate(time_hours = case_when(Time == "2h" ~ 2,
-                                Time == "4h" ~ 4,
-                                Time == "UC" ~ 0)) %>% 
-  group_by(Sex, time_hours, gene) %>% 
-  mutate(avg_count = mean(count))
-
-ggplot(gg_top_dif, aes(x = time_hours, y = count, color = gene, fill = gene)) +
-  geom_point() +
-  geom_smooth() +
-  facet_grid(~Sex)+
-  theme_bw() +
-  theme(aspect.ratio = 1)  +
-  ggtitle("Expression of genes that are most highly expressed in males 4 hrs post injection")
-```
-
-```{r}
-fit_both <- top_dif
-
-female_coef$gene <- rownames(female_coef)
-male_coef$gene <- rownames(male_coef)
-
-fit_both <- fit_both %>% 
-  mutate(gene = rownames(fit_both)) %>% 
-  left_join(female_coef, by = "gene") %>% 
-  left_join(male_coef, by = "gene")
-
-male_up <- fit_both %>% 
-  filter(`Male_2-Male_0`>0 & abs(`Male_2-Male_0`) > abs(`Female_2-Female_0`))
-
-male_down <- fit_both %>% 
-  filter(`Male_2-Male_0`<0 & abs(`Male_2-Male_0`) > abs(`Female_2-Female_0`))
-
-female_up <- fit_both %>% 
-  filter(`Female_2-Female_0`>0 & abs(`Female_2-Female_0`) > abs(`Male_2-Male_0`))
-
-female_down <- fit_both %>% 
-  filter(`Female_2-Female_0`<0 & abs(`Female_2-Female_0`) > abs(`Male_2-Male_0`))
-
-```
-
-# GSEA male up 
-```{r}
-male_up <- fit_both %>% 
-  filter(`Male_2-Male_0`>0 & abs(`Male_2-Male_0`) > abs(`Female_2-Female_0`))
-
-male_up <- cbind(male_up, Gene_ID_Flybase[match(male_up$gene, Gene_ID_Flybase$Gene_name), "CG_ID"])
-colnames(male_up)[ncol(male_up)] = "CG_ID"
-
-ranks <- male_up$dif2hr[!is.na(male_up$dif2hr)]
-names(ranks) <- male_up$CG_ID[!is.na(male_up$dif2hr)]
-head(ranks)
-barplot(sort(ranks, decreasing = T))
-
-fgseaRes_male_up <- fgsea(t_Drosophila_REACTOME, ranks, minSize = 15, maxSize = 500)
-head(fgseaRes_male_up[order(padj, -abs(NES)), ], n=10)
-fgseaRes_male_up$group <- "male_up"
-
-fgseaRes_KEGG_male_up <- fgsea(t_Drosophila_KEGG, ranks, minSize = 15, maxSize = 500)
-head(fgseaRes_KEGG_male_up[order(padj, -abs(NES)), ], n=10)
-fgseaRes_KEGG_male_up$group <- "male_up"
-```
-
-# GSEA female up 
-```{r}
-female_up <- fit_both %>% 
-  filter(`Female_2-Female_0`>0 & abs(`Female_2-Female_0`) > abs(`Male_2-Male_0`))
-
-female_up <- cbind(female_up, Gene_ID_Flybase[match(female_up$gene, Gene_ID_Flybase$Gene_name), "CG_ID"])
-colnames(female_up)[ncol(female_up)] = "CG_ID"
-
-ranks <- female_up$dif2hr[!is.na(female_up$dif2hr)]
-names(ranks) <- female_up$CG_ID[!is.na(female_up$dif2hr)]
-head(ranks)
-barplot(sort(ranks, decreasing = T))
-
-fgseaRes_female_up <- fgsea(t_Drosophila_REACTOME, ranks, minSize = 15, maxSize = 500)
-head(fgseaRes_female_up[order(padj, -abs(NES)), ], n=10)
-fgseaRes_female_up$group <- "female_up"
-
-fgseaRes_KEGG_female_up <- fgsea(t_Drosophila_KEGG, ranks, minSize = 15, maxSize = 500)
-head(fgseaRes_KEGG_female_up[order(padj, -abs(NES)), ], n=10)
-fgseaRes_KEGG_female_up$group <- "female_up"
-```
-
-# GSEA male down 
-```{r}
-male_down <- fit_both %>% 
-  filter(`Male_2-Male_0`<0 & abs(`Male_2-Male_0`) > abs(`Female_2-Female_0`))
-
-male_down <- cbind(male_down, Gene_ID_Flybase[match(male_down$gene, Gene_ID_Flybase$Gene_name), "CG_ID"])
-colnames(male_down)[ncol(male_down)] = "CG_ID"
-
-ranks <- male_down$dif2hr[!is.na(male_down$dif2hr)]
-names(ranks) <- male_down$CG_ID[!is.na(male_down$dif2hr)]
-head(ranks)
-barplot(sort(ranks, decreasing = T))
-
-fgseaRes_male_down <- fgsea(t_Drosophila_REACTOME, ranks, minSize = 15, maxSize = 500)
-head(fgseaRes_male_down[order(padj, -abs(NES)), ], n=10)
-fgseaRes_male_down$group <- "male_down"
-
-fgseaRes_KEGG_male_down <- fgsea(t_Drosophila_KEGG, ranks, minSize = 15, maxSize = 500)
-head(fgseaRes_KEGG_male_down[order(padj, -abs(NES)), ], n=10)
-fgseaRes_KEGG_male_down$group <- "male_down"
-```
-
-
-# GSEA female down 
-```{r}
-female_down <- fit_both %>% 
-  filter(`Female_2-Female_0`<0 & abs(`Female_2-Female_0`) > abs(`Male_2-Male_0`))
-
-female_down <- cbind(female_down, Gene_ID_Flybase[match(female_down$gene, Gene_ID_Flybase$Gene_name), "CG_ID"])
-colnames(female_down)[ncol(female_down)] = "CG_ID"
-
-ranks <- female_down$dif2hr[!is.na(female_down$dif2hr)]
-names(ranks) <- female_down$CG_ID[!is.na(female_down$dif2hr)]
-head(ranks)
-barplot(sort(ranks, decreasing = T))
-
-fgseaRes_female_down <- fgsea(t_Drosophila_REACTOME, ranks, minSize = 15, maxSize = 500)
-head(fgseaRes_female_down[order(padj, -abs(NES)), ], n=10)
-fgseaRes_female_down$group <- "female_down"
-
-fgseaRes_KEGG_female_down <- fgsea(t_Drosophila_KEGG, ranks, minSize = 15, maxSize = 500)
-head(fgseaRes_KEGG_female_down[order(padj, -abs(NES)), ], n=10)
-fgseaRes_KEGG_female_down$group <- "female_down"
-```
-
-# All GSEA
-```{r}
-all_gsea <- rbind(fgseaRes_male_down, fgseaRes_male_up, fgseaRes_female_down, fgseaRes_female_up) %>% 
-  separate(group,into = c("sex", "direction"), sep = "_", remove = FALSE) %>% 
-  mutate(color = factor(case_when(NES >= 1 & pval < 0.05 ~ "blue", 
-                                  NES <= -1 & pval < 0.05 ~ "red", 
-                                  TRUE ~ "grey")))
-colors_gsea_vol <- c("#E35932", "lightgrey", "#210C4A")
-ggplot(all_gsea, aes(x = NES, y = -log(pval))) +
-  geom_point(aes(color = color)) +
-  geom_text_repel(data = all_gsea %>% filter(NES < -1 | NES > 1) %>% filter(pval <0.05), aes(label = pathway)) +
-  facet_wrap(~sex) +
-  scale_colour_manual(limits=c("blue","grey", "red"),
-                      values = colors_gsea_vol,
-                      labels=c("Upregulated","ns","Downregulated"))
-```
-
-
-
-```{r}
-male_genes <- rbind(male_up, male_down)
-original_gene_list <- male_genes$`Male_2-Male_0`
-names(original_gene_list) <- male_genes$gene
-gene_list <- na.omit(original_gene_list)
-gene_list <- sort(gene_list, decreasing = TRUE)
-
-gse <- gseGO(geneList = gene_list,
-             ont = "ALL",
-             keyType = "GENENAME",
-             minGSSize = 3,
-             maxGSSize = 800,
-             pvalueCutoff = 0.05,
-             verbose = TRUE,
-             OrgDb = organism,
-             pAdjustMethod = "none")
-
-gse_male_2 <- gse
-
-require(DOSE)
-
-direction_labs <- c("Up-regulated", "Down-regulated")
-names(direction_labs) <- c("activated", "suppressed")
-
-dotplot(gse_male_2, showCategory=10, split=".sign") +
-  facet_grid(.~.sign, labeller = labeller(.sign = direction_labs)) +
-  theme(strip.background = element_rect(fill = "white")) +
-  ggtitle("Pathways differentially expressed in males")
-```
-
-
-```{r}
-female_genes <- rbind(female_up, female_down)
-original_gene_list <- female_genes$`Female_2-Female_0`
-names(original_gene_list) <- female_genes$gene
-gene_list <- na.omit(original_gene_list)
-gene_list <- sort(gene_list, decreasing = TRUE)
-
-gse <- gseGO(geneList = gene_list,
-             ont = "ALL",
-             keyType = "GENENAME",
-             minGSSize = 3,
-             maxGSSize = 800,
-             pvalueCutoff = 0.05,
-             verbose = TRUE,
-             OrgDb = organism,
-             pAdjustMethod = "none")
-
-gse_female_2 <- gse
-
-require(DOSE)
-
-direction_labs <- c("Up-regulated", "Down-regulated")
-names(direction_labs) <- c("activated", "suppressed")
-
-dotplot(gse_female_2, showCategory=10, split=".sign") +
-  facet_grid(.~.sign, labeller = labeller(.sign = direction_labs)) +
-  theme(strip.background = element_rect(fill = "white")) +
-  ggtitle("Pathways differentially expressed in females")
-```
-
-
-```{r}
-up_genes <- rbind(female_up, male_up)
-original_gene_list <- up_genes$dif2hr
-names(original_gene_list) <- up_genes$gene
-gene_list <- na.omit(original_gene_list)
-gene_list <- sort(gene_list, decreasing = TRUE)
-
-gse <- gseGO(geneList = gene_list,
-             ont = "ALL",
-             keyType = "GENENAME",
-             minGSSize = 3,
-             maxGSSize = 800,
-             pvalueCutoff = 0.05,
-             verbose = TRUE,
-             OrgDb = organism,
-             pAdjustMethod = "none")
-
-gse_upreg <- gse
-
-require(DOSE)
-
-direction_labs <- c("Male-specific upregulation", "Female-specific upregulation")
-names(direction_labs) <- c("activated", "suppressed")
-
-dotplot(gse_upreg, showCategory=10, split=".sign") +
-  facet_grid(.~.sign, labeller = labeller(.sign = direction_labs)) +
-  theme(strip.background = element_rect(fill = "white")) +
-  ggtitle("Pathways differentially upregulated between the sexes")
-```
-
-
-```{r}
-down_genes <- rbind(female_down, male_down)
-original_gene_list <- down_genes$dif2hr
-names(original_gene_list) <- down_genes$gene
-gene_list <- na.omit(original_gene_list)
-gene_list <- sort(gene_list, decreasing = TRUE)
-
-gse <- gseGO(geneList = gene_list,
-             ont = "ALL",
-             keyType = "GENENAME",
-             minGSSize = 3,
-             maxGSSize = 800,
-             pvalueCutoff = 0.05,
-             verbose = TRUE,
-             OrgDb = organism,
-             pAdjustMethod = "none")
-
-gse_downreg <- gse
-
-require(DOSE)
-
-direction_labs <- c("Female-specific downregulation", "Male-specific downregulation")
-names(direction_labs) <- c("activated", "suppressed")
-
-dotplot(gse_downreg, showCategory=10, split=".sign") +
-  facet_grid(.~.sign, labeller = labeller(.sign = direction_labs)) +
-  theme(strip.background = element_rect(fill = "white")) +
-  ggtitle("Pathways differentially downregulated between the sexes")
-```
-
-
-# Labelled volcano plot
-```{r}
-fit_dif_label <- fit_both %>% 
-  mutate(direction = case_when(`Male_2-Male_0`<0 & abs(`Male_2-Male_0`) > abs(`Female_2-Female_0`) ~ "male_down",
-                               `Male_2-Male_0`>0 & abs(`Male_2-Male_0`) > abs(`Female_2-Female_0`) ~ "male_up",
-                               `Female_2-Female_0`>0 & abs(`Female_2-Female_0`) > abs(`Male_2-Male_0`) ~ "female_up",
-                               `Female_2-Female_0`<0 & abs(`Female_2-Female_0`) > abs(`Male_2-Male_0`) ~ "female_down")) %>% 
-  mutate(color = case_when(abs(dif2hr) > 2 & P.Value < 0.05 ~ direction,
-                           TRUE ~ "NS"))
-
-
-(all_volcano <- fit_dif_label %>% 
- # filter(dif2hr > -2710) %>% 
- # filter(dif2hr < 1184) %>% 
-  ggplot(aes(x = dif2hr, y = -log10(P.Value), label = gene)) +
-  geom_point(aes(color = color)) +
-  #geom_text_repel(data = fit_dif_label %>% filter(!color == "NS"), aes(label = gene)) +
-  scale_color_manual(values = c("#CC4678", "#F89441", "#0D0887", "#7E03A8", "lightgrey")) +
-  theme_bw() +
-  xlab("Log2 Fold Change") +
-  ylab("-log10(P value)"))
-  
-ggplotly(all_volcano)
-```
 
 ## Female
 ```{r}

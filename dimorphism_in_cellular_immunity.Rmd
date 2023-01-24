@@ -33,6 +33,14 @@ library(openxlsx)
 source("score_sheet_prep.R")
 library(dplyr)
 mutate <- dplyr::mutate
+
+
+colors_sex <- c("#D3C164", "#05366E")
+names(colors_sex) <- c("Female", "Male")
+lines <- c("dashed", "solid")
+names(lines) <- c("PBS", "S. aureus")
+colors_inf <- c("#FEC98D", "#000004")
+names(colors_inf) <- c("Uninfected", "Infected")
 ```
 
 
@@ -42,12 +50,6 @@ lower_od <- read_excel_allsheets("20210607_score_sheet.xlsx")
 jun_18 <- read_excel_allsheets("20210618_score_sheet.xlsx") %>% 
   filter(!is.na(Time_of_death))
 
-colors_sex <- c("#D3C164", "#05366E")
-names(colors_sex) <- c("Female", "Male")
-lines <- c("dashed", "solid")
-names(lines) <- c("PBS", "S. aureus")
-colors_inf <- c("#FEC98D", "#000004")
-names(colors_inf) <- c("Uninfected", "Infected")
 ```
 
 ```{r}
@@ -626,8 +628,25 @@ predict(m, type = "response",
 )
 
 confint <- exp(confint(m, parm = "SexMale"))  
+cfint <- confint(m, parm = c("(Intercept)", "SexMale"))
 int_ran_eff_confint <- confint(m, parm = "theta_", oldNames = FALSE)
 
+ci_df <- as.data.frame(confint) %>% 
+  dplyr::rename(lower = `2.5 %`) %>% 
+  dplyr::rename(upper = `97.5 %`) %>% 
+  mutate(y_val = (upper + lower)/2,
+         Sex = gsub("Sex", "", rownames(.))) %>% 
+  add_row(y_val = 1, lower = 1, upper = 1, Sex = "Female") 
+
+(phago_model <- ggplot(ci_df, aes(x = Sex, y = y_val)) +
+  geom_errorbar(aes(ymin = lower, ymax = upper, color = Sex)) +
+  scale_color_manual(values = colors_sex) +
+  theme_bw() +
+  theme(aspect.ratio = 1, legend.position = "none") +
+  ylab("Fixed effects from model (\u00B195% CI)") +
+  xlab(""))
+
+#filename = "results/phago_model.png", height = 4, width = 5)
 
 sim <- simulate(m, nsim = 100)
 obs <- aggregate(all_flow_mod$Engulfed, by = list(Sex = all_flow_mod$Sex, Genotype = all_flow_mod$Genotype, Date = all_flow_mod$Date), mean)
