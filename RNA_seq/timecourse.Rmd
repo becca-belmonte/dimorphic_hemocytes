@@ -94,6 +94,26 @@ fit_lar <- contrasts.fit(fit, cont_lar)
 fit_lar <- eBayes(fit_lar)
 top_lar <- topTable(fit_lar, adjust = "BH", number = 17412)
 
+dat_fpkm_hem <- dat_fpkm %>% 
+  select(contains("hem"))
+
+col_data_hem <- col_data %>% 
+  filter(Stage == "adult" & Tissue == "hemocyte") %>% 
+  mutate(time = gsub("_hr", "", Time_post_inf)) %>% 
+  mutate(time = case_when(time == "UC" ~ 0,
+                          time == "2" ~ 2,
+                          time == "4" ~ 4),
+         time_chr = case_when(Time_post_inf == "UC" ~ "UC",
+                          Time_post_inf == "2_hr" ~ "Hr_2",
+                          Time_post_inf == "4_hr" ~ "Hr_4")) %>% 
+  mutate(group = paste(Sex, time, sep = "_"))
+
+dat_fpkm_hem <- dat_fpkm_hem %>% 
+  select(col_data_hem$ID)
+data_colnames <- colnames(dat_fpkm_hem)
+dat_fpkm_time <- dat_fpkm_hem
+colnames(dat_fpkm_time) <- col_data_hem$time_chr
+
 # differentially expressed over time (ignoring sex)
 lev <- c("UC", "Hr_2", "Hr_4")
 f <- factor(col_data_hem$time_chr, levels = lev)
@@ -210,7 +230,7 @@ fit_sex <- contrasts.fit(fit, cont_sex)
 fit_sex <- eBayes(fit_sex)
 top_sex <- topTable(fit_sex, adjust = "BH", number = 17412)
 
-# differentially expressed over time (ignoring time)
+# differentially expressed over time (ignoring sex)
 lev <- c("UC", "Hr_2", "Hr_4")
 f <- factor(col_data_hem$time_chr, levels = lev)
 design <- model.matrix(~0+f)
@@ -220,6 +240,7 @@ fit <- lmFit(dat_fpkm_time, design)
 # Which genes respond at either the 2 hour or 4 hour time?
 cont_time <- makeContrasts(
   "Hr_2-UC",
+  "Hr_4-UC",
   "Hr_4-Hr_2",
   levels = design
 )
@@ -271,6 +292,85 @@ top_dif <- topTable(fit_dif, adjust.method = "BH", sort.by = "B", resort.by = NU
 
 # Visualizations
 ## Both
+```{r}
+top_time_fb <- top_time %>% 
+  mutate(gene_name = rownames(.)) %>% 
+  left_join(gene_names_fb)
+
+time_KEGG_enrichment <- vector("list")
+id_list <- vector("list")
+
+top_time_KEGG <- top_time_fb %>% 
+  mutate(direction_2 = case_when(Hr_2.UC <0 ~ "2h_neg",
+                                 Hr_2.UC >0 ~ "2h_pos"),
+         direction_4 = case_when(Hr_4.UC <0 ~ "4h_neg",
+                                 Hr_4.UC >0 ~ "4h_pos")) %>% 
+  mutate(direction = paste(direction_2, direction_4)) %>% 
+  filter(!direction %in% c("NA NA", "2h_neg NA", "NA 4h_pos"))
+ 
+directions <- unique(top_time_KEGG$direction)
+
+for(i in directions){
+  genes <- top_time_KEGG %>% 
+    filter(direction == i & adj.P.Val < 0.05)
+
+original_gene_list <- genes$Hr_2.UC
+names(original_gene_list) <- genes$gene_id
+
+ids<-bitr(names(original_gene_list), fromType = "FLYBASE", toType = "ENTREZID", OrgDb=organism)
+ # remove duplicate IDS (here I use "ENSEMBL", but it should be whatever was selected as keyType)
+dedup_ids = ids[!duplicated(ids[c("FLYBASE")]),]
+
+gene <- dedup_ids$ENTREZID
+
+kk <- enrichKEGG(gene = gene,
+                 organism = "dme",
+                 keyType = "ncbi-geneid",
+                 pvalueCutoff = 0.05)
+id_list[[i]] <- ids
+time_KEGG_enrichment[[i]] <- kk
+}
+
+downregulated_KEGG <- time_KEGG_enrichment$`2h_neg 4h_neg`@result
+apoptosis_down <- downregulated_KEGG %>% filter(Description == "Apoptosis - fly")
+upregulated_KEGG <- time_KEGG_enrichment$`2h_pos 4h_pos`@result
+toll_imd_up <- upregulated_KEGG %>% filter(Description == "Toll and Imd signaling pathway")
+
+
+time_KEGG_enrichment_2 <- vector("list")
+id_list_2 <- vector("list")
+directions <- unique(top_time_KEGG$direction_2)
+
+for(i in directions){
+  genes <- top_time_KEGG %>% 
+    filter(direction_2 == i & P.Value < 0.05)
+
+original_gene_list <- genes$Hr_2.UC
+names(original_gene_list) <- genes$gene_id
+
+ids<-bitr(names(original_gene_list), fromType = "FLYBASE", toType = "ENTREZID", OrgDb=organism)
+ # remove duplicate IDS (here I use "ENSEMBL", but it should be whatever was selected as keyType)
+dedup_ids = ids[!duplicated(ids[c("FLYBASE")]),]
+
+gene <- dedup_ids$ENTREZID
+
+kk <- enrichKEGG(gene = gene,
+                 organism = "dme",
+                 keyType = "ncbi-geneid",
+                 pvalueCutoff = 0.05)
+id_list_2[[i]] <- ids
+time_KEGG_enrichment_2[[i]] <- kk
+}
+
+(downregulated_dotplot <- dotplot(time_KEGG_enrichment$`2h_neg 4h_neg`) + theme(aspect.ratio = 1) + ggtitle("KEGG pathways enriched in downregulated genes"))
+#ggsave(filename = "results/downregulated_kegg.png", downregulated_dotplot, width = 7, height = 5)
+
+(upregulated_dotplot_2 <- dotplot(time_KEGG_enrichment$`2h_pos 4h_pos`) + theme(aspect.ratio = 1) + ggtitle("KEGG pathways enriched in upregulated genes"))
+#ggsave(filename = "results/upregulated_kegg_2.png", upregulated_dotplot_2, width = 7, height = 5)
+
+```
+
+## Sex dimorphic
 ```{r}
 top_time$gene <- rownames(top_time)
 
@@ -569,7 +669,7 @@ mat_top_toll_imd <- as.matrix(toll_imd_top_dif)
 
 mat_top_toll_imd <- mat_top_toll_imd - rowMeans(mat_top_toll_imd)
 
-heatmap3(mat_top_toll_imd, trace = "none", col = colors, labCol = NULL, labRow = rownames(mat_top_toll_imd), RowSideLabs = F, ColSideLabs = F, mar = c(5, 12), key.title = "Expression", cexRow = 1, scale = "row")
+# heatmap3(mat_top_toll_imd, trace = "none", col = colors, labCol = NULL, labRow = rownames(mat_top_toll_imd), RowSideLabs = F, ColSideLabs = F, mar = c(5, 12), key.title = "Expression", cexRow = 1, scale = "row")
 # grid.echo()
 # top_toll_imd <- grid.grab()
 # 
@@ -608,7 +708,7 @@ names(sex_labs) <- c("F", "M")
   xlab("Hours post injection") +
   ggtitle("Expression of Toll and Imd pathway in hemocytes") +
   theme(aspect.ratio = 1, strip.background = element_rect(fill = "white")))
-ggsave("results/toll_imd_plot.png", plot = toll_imd_plot, width = 5, height = 5) 
+#ggsave("results/toll_imd_plot.png", plot = toll_imd_plot, width = 5, height = 5) 
 
 
 ############################################################
@@ -644,8 +744,8 @@ toll_imd_vol <- top_time_vol %>%
     ggtitle(paste("Change in Toll and Imd pathways \nbetween 4 and 2 hours")) +
     theme(aspect.ratio = 1))
 
-ggsave("results/toll_imd_vol_2.png", toll_imd_vol_plot, width = 6, height = 4)
-ggsave("results/toll_imd_vol_4.png", toll_imd_vol_4_plot, width = 6, height = 4)
+#ggsave("results/toll_imd_vol_2.png", toll_imd_vol_plot, width = 6, height = 4)
+#ggsave("results/toll_imd_vol_4.png", toll_imd_vol_4_plot, width = 6, height = 4)
 
 
 
@@ -668,7 +768,8 @@ toll_imd_vol_0 <- top_sex_0 %>%
     xlab("Log2 Fold Change at baseline") +
     ylab("-log10(P value)") +
     ggtitle(paste("Sex specific expression of Toll and Imd pathways after 0 hours")) +
-    theme(aspect.ratio = 1))
+    theme(aspect.ratio = 1) +
+    ylim(c(0, 3.4)))
 
 toll_imd_vol_2 <- top_sex_2 %>% 
   mutate(gene_name = rownames(.)) %>% 
@@ -687,7 +788,8 @@ toll_imd_vol_2 <- top_sex_2 %>%
     xlab("Log2 Fold Change at 2 hours") +
     ylab("-log10(P value)") +
     ggtitle(paste("Sex specific expression of Toll and Imd pathways after 2 hours")) +
-    theme(aspect.ratio = 1))
+    theme(aspect.ratio = 1) +
+    ylim(c(0, 3.4)))
 
 toll_imd_vol_4 <- top_sex_4 %>% 
   mutate(gene_name = rownames(.)) %>% 
@@ -706,7 +808,8 @@ toll_imd_vol_4 <- top_sex_4 %>%
     xlab("Log2 Fold Change at 4 hours") +
     ylab("-log10(P value)") +
     ggtitle(paste("Sex specific expression of Toll and Imd pathways after 4 hours")) +
-    theme(aspect.ratio = 1))
+    theme(aspect.ratio = 1) +
+    ylim(c(0, 3.4)))
 
 ggsave("results/toll_imd_vol_plot_0.png", toll_imd_vol_plot_0, width = 6, height = 4)
 ggsave("results/toll_imd_vol_plot_2.png", toll_imd_vol_plot_2, width = 6, height = 4)
@@ -1161,7 +1264,7 @@ mME = MEs0 %>%
   scale_fill_viridis() +
   theme(axis.text.x = element_text(angle=90)) +
   labs(title = "Module-trait Relationships", y = "Modules", fill="corr"))
-#ggsave("results/module_heatmap.png", module_heatmap, height = 4, width = 8)
+#ggsave("results/module_heatmap.png", module_heatmap, height = 2, width = 7.5)
 ```
 
 
@@ -1281,10 +1384,12 @@ dotplots <- vector("list")
 
 for(i in modules){
   kk <- KEGG_enrichment_95[[i]]
-  dotplot_graph <- dotplot(kk) + ggtitle(paste("KEGG enrichment in", i, "module"))
+  dotplot_graph <- dotplot(kk) +
+    theme(aspect.ratio = 1) +
+    ggtitle(paste("KEGG enrichment in", i, "module"))
   dotplots[[i]] <- dotplot_graph
   if(nrow(dotplot_graph[["data"]]) > 0){
-  ggsave(filename = paste("results/",i, ".png", sep = ""), dotplot_graph, width = 8, height = 6)}
+  ggsave(filename = paste("results/",i, ".png", sep = ""), dotplot_graph, width = 7, height = 5)}
 }
 ```
 
