@@ -734,14 +734,14 @@ toll_imd_vol <- top_time_vol %>%
     ggtitle(paste("Change in Toll and Imd pathways \nafter 2 hours")) +
     theme(aspect.ratio = 1))
 
-(toll_imd_vol_4_plot <- ggplot(toll_imd_vol, aes(x = Hr_4.Hr_2, y = -log10(P.Value), label = gene_name)) +
+(toll_imd_vol_4_plot <- ggplot(toll_imd_vol, aes(x = Hr_4.UC, y = -log10(P.Value), label = gene_name)) +
     geom_point(aes(color = color_4)) +
     geom_text_repel(data = toll_imd_vol %>% filter(!color_4 == "NS")) +
     scale_color_manual(values = c("#000004", "lightgrey", "#F56B5C"), name = NULL) +
     theme_bw() +
     xlab("Log2 Fold Change at 4 hours") +
     ylab("-log10(P value)") +
-    ggtitle(paste("Change in Toll and Imd pathways \nbetween 4 and 2 hours")) +
+    ggtitle(paste("Change in Toll and Imd pathways \nafter 4 hours")) +
     theme(aspect.ratio = 1))
 
 #ggsave("results/toll_imd_vol_2.png", toll_imd_vol_plot, width = 6, height = 4)
@@ -870,12 +870,12 @@ names(sex_labs) <- c("F", "M")
   geom_point() +
   theme_bw() +
   theme(legend.position = "none", aspect.ratio = 1) +
-  facet_grid(direction~Sex, labeller = labeller(direction = direction_labs, Sex = sex_labs)) +
+  facet_grid(~Sex, labeller = labeller(direction = direction_labs, Sex = sex_labs)) +
   ylab("Gene counts (normalized to zero)") +
   xlab("Hours post injection") +
   ggtitle("Expression of endocytosis pathway in hemocytes") +
   theme(aspect.ratio = 1, strip.background = element_rect(fill = "white")))
-#ggsave("results/endocytosis_plot.png", plot = endocytosis_plot, width = 5, height = 5) 
+#ggsave("results/endocytosis_plot.png", plot = endocytosis_plot, width = 5, height = 3) 
 
 
 ############################################################
@@ -966,12 +966,12 @@ names(sex_labs) <- c("F", "M")
   geom_point() +
   theme_bw() +
   theme(legend.position = "none", aspect.ratio = 1) +
-  facet_grid(direction~Sex, labeller = labeller(direction = direction_labs, Sex = sex_labs)) +
+  facet_grid(~Sex, labeller = labeller(direction = direction_labs, Sex = sex_labs)) +
   ylab("Gene counts (normalized to zero)") +
   xlab("Hours post injection") +
   ggtitle("Expression of phagosome pathway in hemocytes") +
   theme(aspect.ratio = 1, strip.background = element_rect(fill = "white")))
-#ggsave("Results/phagosome_plot.png", plot = phagosome_plot, width = 5, height = 5) 
+#ggsave("Results/phagosome_plot.png", plot = phagosome_plot, width = 5, height = 3) 
 ```
 
 ###### Differences in pathway at 0
@@ -996,7 +996,7 @@ top_sex_0_vol <- top_sex_0 %>%
   xlab("Log2 fold change") +
   ylab("-log10 p-value"))
 
-ggsave("results/endo_phagosome_vol_0.png", plot = endo_phagosome_vol_0, width = 6, height = 4) 
+#ggsave("results/endo_phagosome_vol_0.png", plot = endo_phagosome_vol_0, width = 6, height = 4) 
 ```
 
 
@@ -1255,16 +1255,27 @@ mME = MEs0 %>%
   )
 
 (module_heatmap <- mME %>% 
-  filter(name %in% c("grey","yellow")) %>% 
-  mutate(name = factor(name, levels = c("grey", "yellow")),
-         treatment = factor(treatment, levels = c("F_UC_hem_2", "F_UC_hem_3", "F_UC_hem_4", "F_UC_hem_5", "M_UC_hem_2", "M_UC_hem_3", "M_UC_hem_5", "F_2h_hem_1", "F_2h_hem_2", "F_2h_hem_3", "F_2h_hem_4", "F_2h_hem_5", "M_2h_hem_1", "M_2h_hem_2", "M_2h_hem_3", "M_2h_hem_4", "M_2h_hem_5", "F_4h_hem_1", "F_4h_hem_2", "F_4h_hem_3", "F_4h_hem_4", "F_4h_hem_5", "M_4h_hem_1", "M_4h_hem_2", "M_4h_hem_3", "M_4h_hem_4", "M_4h_hem_5"))) %>% 
+  filter(name %in% c("yellow")) %>% 
+    mutate(treatment = gsub("_hem","", treatment))  %>% 
+  mutate(name = factor(name, levels = c("yellow")),
+         treatment = factor(treatment, levels = c("F_UC_2", "F_UC_3", "F_UC_4", "F_UC_5", "M_UC_2", "M_UC_3", "M_UC_5", "F_2h_1", "F_2h_2", "F_2h_3", "F_2h_4", "F_2h_5", "M_2h_1", "M_2h_2", "M_2h_3", "M_2h_4", "M_2h_5", "F_4h_1", "F_4h_2", "F_4h_3", "F_4h_4", "F_4h_5", "M_4h_1", "M_4h_2", "M_4h_3", "M_4h_4", "M_4h_5")))%>% 
   ggplot(., aes(x=treatment, y=name, fill=value)) +
   geom_tile() +
   theme_bw() +
   scale_fill_viridis() +
   theme(axis.text.x = element_text(angle=90)) +
-  labs(title = "Module-trait Relationships", y = "Modules", fill="corr"))
-#ggsave("results/module_heatmap.png", module_heatmap, height = 2, width = 7.5)
+  labs(title = "Module-trait Relationships", y = "Modules", fill="corr") +
+  annotate("segment", x = 0.5, xend = 7.5, y = 1.7, yend = 1.7, colour = "#000004", linewidth = 5) +
+  annotate("segment", x = 7.5, xend = 17.5, y = 1.7, yend = 1.7, colour = "#FEC287", linewidth = 5) +
+  annotate("segment", x = 17.5, xend = 27.5, y = 1.7, yend = 1.7, colour = "#F56B5C", linewidth = 5) +
+  annotate("segment", x = 0.5, xend = 4.5, y = 1.6, yend = 1.6, colour = "#D3C164", linewidth = 5) +
+  annotate("segment", x = 4.5, xend = 7.5, y = 1.6, yend = 1.6, colour = "#05366E", linewidth = 5) +
+  annotate("segment", x = 7.5, xend = 12.5, y = 1.6, yend = 1.6, colour = "#D3C164", linewidth = 5) +
+  annotate("segment", x = 12.5, xend = 17.5, y = 1.6, yend = 1.6, colour = "#05366E", linewidth = 5) +
+  annotate("segment", x = 17.5, xend = 22.5, y = 1.6, yend = 1.6, colour = "#D3C164", linewidth = 5) +
+  annotate("segment", x = 22.5, xend = 27.5, y = 1.6, yend = 1.6, colour = "#05366E", linewidth = 5) +
+  expand_limits(y = 1.75))
+ggsave("results/module_heatmap.png", module_heatmap, height = 2.5, width = 7.5)
 ```
 
 
@@ -1292,16 +1303,31 @@ submod_df = data.frame(subexpr) %>%
     module = module_df_95[gene_id,]$colors
   )
 
-submod_df %>% ggplot(., aes(x=name, y=value, group=gene_id)) +
+(normalized_ex_yellow <- submod_df%>%
+  filter(module %in% c("yellow")) %>% 
+  mutate(name = factor(name, levels = c("F_UC_hem_2", "F_UC_hem_3", "F_UC_hem_4", "F_UC_hem_5", "M_UC_hem_2", "M_UC_hem_3", "M_UC_hem_5", "F_2h_hem_1", "F_2h_hem_2", "F_2h_hem_3", "F_2h_hem_4", "F_2h_hem_5", "M_2h_hem_1", "M_2h_hem_2", "M_2h_hem_3", "M_2h_hem_4", "M_2h_hem_5", "F_4h_hem_1", "F_4h_hem_2", "F_4h_hem_3", "F_4h_hem_4", "F_4h_hem_5", "M_4h_hem_1", "M_4h_hem_2", "M_4h_hem_3", "M_4h_hem_4", "M_4h_hem_5"))) %>% 
+  ggplot(., aes(x=name, y=value, group=gene_id)) +
   geom_line(aes(color = module),
             alpha = 0.2) +
   theme_bw() +
   theme(
-    axis.text.x = element_text(angle = 90)
+    axis.text.x = element_text(angle = 90), legend.position = "none"
   ) +
-  facet_grid(rows = vars(module)) +
-  labs(x = "treatment",
-       y = "normalized expression")
+  scale_color_manual(values = c("#e6b800")) +
+  #facet_grid(rows = vars(module)) +
+  labs(x = "Treatment",
+       y = "Normalized\nexpression") +
+  annotate("segment", x = 1, xend = 7.5, y = 17, yend = 17, colour = "#000004", linewidth = 2) +
+  annotate("segment", x = 7.5, xend = 17.5, y = 17, yend = 17, colour = "#FEC287", linewidth = 2) +
+  annotate("segment", x = 17.5, xend = 27, y = 17, yend = 17, colour = "#F56B5C", linewidth = 2) +
+  annotate("segment", x = 1, xend = 4.5, y = 18, yend = 18, colour = "#D3C164", linewidth = 2) +
+  annotate("segment", x = 4.5, xend = 7.5, y = 18, yend = 18, colour = "#05366E", linewidth = 2) +
+  annotate("segment", x = 7.5, xend = 12.5, y = 18, yend = 18, colour = "#D3C164", linewidth = 2) +
+  annotate("segment", x = 12.5, xend = 17.5, y = 18, yend = 18, colour = "#05366E", linewidth = 2) +
+  annotate("segment", x = 17.5, xend = 22.5, y = 18, yend = 18, colour = "#D3C164", linewidth = 2) +
+  annotate("segment", x = 22.5, xend = 27, y = 18, yend = 18, colour = "#05366E", linewidth = 2) )
+
+#ggsave("results/normalized_ex_yellow.png", normalized_ex_yellow, height = 2, width = 7.5)
 ```
 
 ```{r}

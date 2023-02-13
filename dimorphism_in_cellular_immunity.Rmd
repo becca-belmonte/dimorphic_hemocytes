@@ -155,6 +155,10 @@ staph_mod <- od_0.25_staph %>%
   mutate(Day_of_injection =  as.factor(as.POSIXct(Day_of_injection, format = "%Y-%m-%d")),
          Group = as.factor(paste(Sex)))
 
+m <- coxph(Surv(Time_to_death,Censor) ~ Sex + Day_of_injection, data= staph_mod)
+m.1 <- coxph(Surv(Time_to_death,Censor) ~  Day_of_injection, data= staph_mod)
+anova(m, m.1)
+
 model_Group <- coxph(Surv(Time_to_death,Censor) ~ Group + Day_of_injection, data= staph_mod)
 
 multcomp = glht(model_Group, linfct=mcp(Group="Tukey"))
@@ -321,6 +325,11 @@ ggplot(aes(x = time, y = survival, color = Sex, ymin = lower, ymax = upper, fill
 staph_mod <- hml_rpr_all %>% 
   filter(Challenge == "S_aureus") %>% 
   mutate(Group = as.factor(paste(Sex, Food)))
+
+m <- coxme(Surv(Time_to_death, Censor) ~ Sex*Food + (1|unique_vial), data = staph_mod)
+m.1 <- coxme(Surv(Time_to_death, Censor) ~ Sex + Food + (1|unique_vial), data = staph_mod)
+anova(m, m.1)
+
 
 model_Group <- coxph(Surv(Time_to_death,Censor) ~ Group, data= staph_mod)
 
@@ -627,9 +636,9 @@ predict(m, type = "response",
         newdata = data.frame(Sex = c("Female", "Male"))
 )
 
-confint <- exp(confint(m, parm = "SexMale"))  
-cfint <- confint(m, parm = c("(Intercept)", "SexMale"))
-int_ran_eff_confint <- confint(m, parm = "theta_", oldNames = FALSE)
+# confint <- exp(confint(m, parm = "SexMale"))  
+# cfint <- confint(m, parm = c("(Intercept)", "SexMale"))
+# int_ran_eff_confint <- confint(m, parm = "theta_", oldNames = FALSE)
 
 ci_df <- as.data.frame(confint) %>% 
   dplyr::rename(lower = `2.5 %`) %>% 
